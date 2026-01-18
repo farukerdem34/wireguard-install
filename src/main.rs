@@ -2,7 +2,7 @@ use std::io;
 use dialoguer::Input;
 use rand::prelude::IndexedRandom;
 use tokio;
-struct InstallAnswers {
+pub struct InstallAnswers {
     server_pub_ip: String,
     server_wg_nic: String,
     server_wg_ip: String,
