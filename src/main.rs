@@ -93,6 +93,8 @@ pub fn install_wireguard(os: OsType) {
 
     let _ = fs::create_dir("/etc/wireguard");
     fn set_permissions_recursive(path: &Path, mode: u32) -> io::Result<()> {
+        // TO DO
+        // Directories must have execute permission
         let metadata = fs::metadata(path)?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(mode);
