@@ -16,7 +16,45 @@ async fn main() {
     initialCheck().await;
     let install_answers: InstallAnswers = install_question();
 }
-
+pub fn install_wireguard() {
+    let answers: InstallAnswers = install_question();
+    let os = std::env::var("OS").unwrap();
+    let cmd = match os.as_str() {
+        "debian" | "ubuntu" => vec![
+            "apt-get update",
+            "apt-get install -y wireguard iptables resolvconf qrencode",
+        ],
+        "fedora" => {
+            if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() > 32 {
+                vec![
+                    "dnf install -y dnf-plugins-core",
+                    "dnf copr enable -y jdoss/wireguard",
+                    "dnf install -y wireguard-dkms",
+                ]
+            } else {
+                vec!["dnf install -y wireguard-tools iptables qrencode"]
+            }
+        }
+        "centos" | "almalinux" | "rocky" => {
+            let version_id: String = std::env::var("VERSION_ID").unwrap();
+            if version_id.starts_with("8") {
+                vec![
+                    "yum install -y epel-release elrepo-release",
+                    "yum install -y kmod-wireguard",
+                    "qrencode",
+                ]
+            } else {
+                vec!["yum install -y wireguard-tools iptables"]
+            }
+        }
+        "arch" => vec!["pacman -S --needed --noconfirm wireguard-tools qrencode"],
+        "alpine" => vec!["apk add wireguard-tools iptables libqrencode-tools"],
+        _ => {
+            eprintln!("Unrecognized OS");
+            std::process::exit(1)
+        },
+    };
+}
 pub fn install_question() -> InstallAnswers {
     println!(
         r#"
