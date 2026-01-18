@@ -147,11 +147,18 @@ pub fn install_question() -> InstallAnswers {
         .unwrap();
     let mut server_public_ipv6: Option<String> = None;
     if want_ipv6 {
-        server_public_ipv6 = {
+        let predicted_server_public_ipv6 = {
             let ipv4 = Ipv4Addr::from_str(&server_public_ip).unwrap();
             let ipv6: Ipv6Addr = ipv4.to_ipv6_mapped();
-            Some(ipv6.to_string())
+            ipv6
         };
+        server_public_ipv6 = Some(
+            Input::new()
+                .with_prompt("IPv6 public address: ")
+                .default(predicted_server_public_ipv6.to_string())
+                .interact_text()
+                .unwrap()
+        );
     }
     let server_public_nic: String = Input::new()
         .with_prompt("Public interface: ")
