@@ -8,46 +8,57 @@ async fn main() {
     check_os();
 }
 
-pub fn check_os(){
+pub fn check_os() {
     let os: String = get_os();
     dotenv::from_path("/etc/os-release").unwrap();
     match os.as_str() {
         "debian" | "rasbian" => {
             let version = std::env::var("VERSION_ID").unwrap();
-            if version.parse::<u8>().expect("Failed to parse Debian version number") < 10{
+            if version
+                .parse::<u8>()
+                .expect("Failed to parse Debian version number")
+                < 10
+            {
                 eprintln!("Please use Debian 10 Buster or later");
                 std::process::exit(1);
             }
-        },
+        }
         "ubuntu" => {
-            let release_year = std::env::var("VERSION_ID").unwrap().split_once(".").unwrap().1.parse::<u8>().unwrap();
-            if release_year < 18{
+            let release_year = std::env::var("VERSION_ID")
+                .unwrap()
+                .split_once(".")
+                .unwrap()
+                .1
+                .parse::<u8>()
+                .unwrap();
+            if release_year < 18 {
                 eprintln!("Please use Ubuntu 18 or later");
                 std::process::exit(1)
             }
-        },
+        }
         "fedora" => {
-           if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 32 {
-               eprintln!("Please use Fedora 32 or later");
-               std::process::exit(1)
-           }
-        },
+            if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 32 {
+                eprintln!("Please use Fedora 32 or later");
+                std::process::exit(1)
+            }
+        }
         "centos" | "almalinux" | "rocky" => {
             if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 7 {
                 eprintln!("Please use CentOS 8 or later");
                 std::process::exit(1)
             }
-        },
+        }
         _ => {
-            eprintln!("Looks like you aren't running this installer on a Debian, Ubuntu, Fedora, CentOS, AlmaLinux, Oracle or Arch Linux system");
+            eprintln!(
+                "Looks like you aren't running this installer on a Debian, Ubuntu, Fedora, CentOS, AlmaLinux, Oracle or Arch Linux system"
+            );
             std::process::exit(2);
         }
     }
-
 }
-pub fn get_os() -> String{
+pub fn get_os() -> String {
     dotenv::from_path("/etc/os-release").unwrap();
-    let os = match std::env::var("OS"){
+    let os = match std::env::var("OS") {
         Ok(os) => os,
         Err(e) => {
             eprintln!("Something went wrong getting OS information, please check supported OSes.");
