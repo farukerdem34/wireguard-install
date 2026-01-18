@@ -8,6 +8,20 @@ async fn main() {
     check_os();
 }
 
+pub fn get_home_dir_for_client(client_name: &String) -> String {
+    let mut home_dir: String = String::new();
+
+    let path_string = format!("/home/{}", &client_name);
+    let path = std::path::Path::new(&path_string);
+    let exists: bool = path.exists();
+    let is_dir: bool = path.is_dir();
+    if exists && is_dir {
+        home_dir = path_string;
+    }else{
+        home_dir = "/opt/wireguard-clients.d".to_string();
+    }
+    home_dir
+}
 pub fn check_os() {
     let os: String = get_os();
     dotenv::from_path("/etc/os-release").unwrap();
