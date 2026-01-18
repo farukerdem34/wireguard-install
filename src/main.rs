@@ -6,6 +6,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use rand::Rng;
 use tokio;
 pub enum OsType {
     Ubuntu,
@@ -177,9 +178,10 @@ pub fn install_question() -> InstallAnswers {
         .default("10.19.11.1".to_string().into())
         .interact_text()
         .unwrap();
-    let mut rng = rand::rng();
-    let numbers: Vec<u16> = (50000..65000).collect();
-    let random_server_port = numbers.choose(&mut rng).unwrap();
+    // let mut rng = rand::rng();
+    // let numbers: Vec<u16> = (50000..65000).collect();
+    // let random_server_port = numbers.choose(&mut rng).unwrap();
+    let random_server_port = rand::rng().random_range(50000..65000);
     let server_port: String = Input::new()
         .with_prompt("Server port: ")
         .default(random_server_port.to_string().into())
