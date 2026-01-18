@@ -43,7 +43,7 @@ pub fn install_wireguard(os: OsType) {
             "apt-get install -y wireguard iptables resolvconf qrencode",
         ],
         OsType::Fedora => {
-            if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() > 32 {
+            if std::env::var("VERSION_ID").expect("Failed to get version ID environment variable").parse::<u8>().expect("Failed to parse Fedora version ID") > 32 {
                 vec![
                     "dnf install -y dnf-plugins-core",
                     "dnf copr enable -y jdoss/wireguard",
@@ -54,7 +54,7 @@ pub fn install_wireguard(os: OsType) {
             }
         }
         OsType::Centos | OsType::AlmaLinux | OsType::Rocky => {
-            let version_id: String = std::env::var("VERSION_ID").unwrap();
+            let version_id: String = std::env::var("VERSION_ID").expect("Failed to get version ID environment variable");
             if version_id.starts_with("8") {
                 vec![
                     "yum install -y epel-release elrepo-release",
@@ -84,7 +84,7 @@ pub fn install_wireguard(os: OsType) {
     if !std::process::Command::new("sh")
         .args(vec!["-c", "command", "-v", "wg"])
         .status()
-        .unwrap()
+        .expect("failed to find wg command")
         .success()
     {
         eprintln!("Wireguard couldn't installed succesfully. Exiting...");
@@ -110,7 +110,7 @@ pub fn install_wireguard(os: OsType) {
 
         Ok(())
     }
-    set_permissions_recursive(Path::new("/etc/wireguard"), 0o600).unwrap()
+    set_permissions_recursive(Path::new("/etc/wireguard"), 0o600).expect("Failed to set permission to /etc/wireguard 600")
 }
 pub fn install_question() -> InstallAnswers {
     println!(
@@ -124,7 +124,7 @@ pub fn install_question() -> InstallAnswers {
     "#
     );
     let (predicted_server_public_ip, predicted_server_public_nic) = {
-        let interfaces = netwatcher::list_interfaces().unwrap();
+        let interfaces = netwatcher::list_interfaces().expect("Failed to list interfaces");
         let mut _ip = Some(String::new());
         let mut _interface = Some(String::new());
         for i in interfaces.values() {
@@ -159,7 +159,7 @@ pub fn install_question() -> InstallAnswers {
                 .with_prompt("IPv6 public address: ")
                 .default(predicted_server_public_ipv6.to_string())
                 .interact_text()
-                .unwrap()
+                .unwrap(),
         );
     }
     let server_public_nic: String = Input::new()
@@ -206,14 +206,14 @@ pub fn install_question() -> InstallAnswers {
         .interact_text()
         .unwrap();
     let answers = InstallAnswers {
-        server_pub_ip: Ipv4Addr::from_str(server_public_ip.as_str()).unwrap(),
+        server_pub_ip: Ipv4Addr::from_str(server_public_ip.as_str()).expect("Failed to parse public IPv4 address"),
         server_public_nic,
         server_pub_ipv6: server_public_ipv6,
-        server_wg_ip: Ipv4Addr::from_str(server_wg_ip.as_str()).unwrap(),
+        server_wg_ip: Ipv4Addr::from_str(server_wg_ip.as_str()).expect("Failed to parse wg0 IP"),
         server_wg_nic: server_wg_interface,
-        server_wg_port: server_port.parse::<u16>().unwrap(),
-        client_dns_1: Ipv4Addr::from_str(client_dns_1.as_str()).unwrap(),
-        client_dns_2: Ipv4Addr::from_str(client_dns_2.as_str()).unwrap(),
+        server_wg_port: server_port.parse::<u16>().expect("Failed to parse port"),
+        client_dns_1: Ipv4Addr::from_str(client_dns_1.as_str()).expect("Failed to parse DNS 1"),
+        client_dns_2: Ipv4Addr::from_str(client_dns_2.as_str()).expect("Failed to parse DNS 2"),
         allowed_ips,
     };
     println!(
@@ -250,7 +250,7 @@ pub fn check_os() -> io::Result<()> {
     let os = get_os();
     match os {
         OsType::Debian | OsType::Rasbian => {
-            let version = std::env::var("VERSION_ID").unwrap();
+            let version = std::env::var("VERSION_ID").expect("Failed to get version ID");
             if version
                 .parse::<u8>()
                 .expect("Failed to parse Debian version number")
@@ -261,26 +261,29 @@ pub fn check_os() -> io::Result<()> {
             }
         }
         OsType::Ubuntu => {
-            let release_year = std::env::var("VERSION_ID")
-                .unwrap()
-                .split_once(".")
-                .unwrap()
-                .1
-                .parse::<u8>()
-                .unwrap();
+            let release_year = {
+                let version_id = std::env::var("VERSION_ID").expect("Failed to get version ID");
+                let major = version_id
+                    .split(".")
+                    .next()
+                    .expect("Failed to get major version id")
+                    .parse::<u8>()
+                    .expect("Failed to parse version ID");
+                major
+            };
             if release_year < 18 {
                 eprintln!("Please use Ubuntu 18 or later");
                 std::process::exit(1)
             }
         }
         OsType::Fedora => {
-            if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 32 {
+            if std::env::var("VERSION_ID").expect("Failed to get version ID").parse::<u8>().expect("Failed to parse Fedora version ID") < 32 {
                 eprintln!("Please use Fedora 32 or later");
                 std::process::exit(1)
             }
         }
         OsType::Centos | OsType::AlmaLinux | OsType::Rocky => {
-            if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 7 {
+            if std::env::var("VERSION_ID").expect("Failed to get version ID").parse::<u8>().expect("Failed to parse version ID") < 7 {
                 eprintln!("Please use CentOS 8 or later");
                 std::process::exit(1)
             }
@@ -297,7 +300,7 @@ pub fn check_os() -> io::Result<()> {
     Ok(())
 }
 pub fn get_os() -> OsType {
-    dotenv::from_path("/etc/os-release").unwrap();
+    dotenv::from_path("/etc/os-release").expect("Failed to load /etc/os-release environment variable");
     let os = match std::env::var("NAME") {
         Ok(os) => os.to_lowercase(),
         Err(e) => {
@@ -319,7 +322,7 @@ pub fn get_os() -> OsType {
     }
 }
 pub async fn check_virtualization() -> io::Result<()> {
-    let virtualiation = heim_virt::detect().await.unwrap();
+    let virtualiation = heim_virt::detect().await.expect("Failed to detect virtualization");
     if virtualiation == heim_virt::Virtualization::Lxc {
         eprintln!(
             r#"
