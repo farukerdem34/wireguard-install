@@ -1,3 +1,4 @@
+use std::io;
 use dialoguer::Input;
 use rand::prelude::IndexedRandom;
 use tokio;
@@ -98,6 +99,12 @@ pub fn install_question() -> InstallAnswers {
         client_dns_2: client_dns_2,
         allowed_ips: allowed_ips,
     };
+    println!(r#"
+    Okay, that was all I needed. We are ready to setup your WireGuard server now.
+    You will be able to generate a client at the end of the installation.
+    Press enter to contiune
+    "#);
+    io::stdin().read_line(&mut String::new()).unwrap();
     answers
 }
 pub fn get_home_dir_for_client(client_name: &String) -> String {
