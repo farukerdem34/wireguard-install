@@ -4,7 +4,7 @@ use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use tokio;
 pub enum OsType {
@@ -226,17 +226,16 @@ pub fn install_question() -> InstallAnswers {
     io::stdin().read_line(&mut String::new()).unwrap();
     answers
 }
-pub fn get_home_dir_for_client(client_name: &String) -> String {
-    let home_dir: String;
+pub fn get_home_dir_for_client(client_name: &String) -> PathBuf {
+    let home_dir: PathBuf;
 
-    let path_string = format!("/home/{}", &client_name);
-    let path = Path::new(&path_string);
+    let path = PathBuf::from("/home/").join(client_name);
     let exists: bool = path.exists();
     let is_dir: bool = path.is_dir();
     if exists && is_dir {
-        home_dir = path_string;
+        home_dir = path;
     } else {
-        home_dir = "/opt/wireguard-clients.d".to_string();
+        home_dir = PathBuf::from_str("/etc/wireguard/clients.d/").expect("Failed to acces /etc/wireguard/clients.d");
     }
     home_dir
 }
