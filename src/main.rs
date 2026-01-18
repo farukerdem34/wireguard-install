@@ -54,6 +54,44 @@ pub fn install_wireguard() {
             std::process::exit(1)
         },
     };
+    for cmd in cmds {
+        let words = cmd.split_whitespace().collect::<Vec<&str>>();
+        let command = std::process::Command::new("sh")
+            .arg("-c")
+            .args(words)
+            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .status();
+    }
+    if !std::process::Command::new("sh")
+        .args(vec!["-c", "command", "-v", "wg"])
+        .status()
+        .unwrap()
+        .success()
+    {
+        eprintln!("Wireguard couldn't installed succesfully. Exiting...");
+        std::process::exit(1);
+    }
+    
+    let _ = fs::create_dir("/etc/wireguard");
+    fn set_permissions_recursive(path: &Path, mode: u32) -> std::io::Result<()> {
+        let metadata = fs::metadata(path)?;
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(mode);
+        fs::set_permissions(path, permissions)?;
+
+        if metadata.is_dir() {
+            for entry in fs::read_dir(path)? {
+                let entry = entry?;
+                let entry_path = entry.path();
+                set_permissions_recursive(&entry_path, mode)?;
+            }
+        }
+
+        Ok(())
+    }
+    set_permissions_recursive(Path::new("/etc/wireguard"),0o600).unwrap()
+
 }
 pub fn install_question() -> InstallAnswers {
     println!(
