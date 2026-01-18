@@ -4,5 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+dotenv = "0.15.0"
 heim-virt = "0.0.11"
+libc = "0.2.180"
 tokio = { version = "1.49.0", features = ["full"] }
