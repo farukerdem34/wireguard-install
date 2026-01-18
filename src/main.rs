@@ -52,7 +52,7 @@ pub fn install_wireguard() {
         _ => {
             eprintln!("Unrecognized OS");
             std::process::exit(1)
-        },
+        }
     };
     for cmd in cmds {
         let words = cmd.split_whitespace().collect::<Vec<&str>>();
