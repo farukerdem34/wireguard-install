@@ -7,7 +7,18 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::str::FromStr;
 use tokio;
-
+pub enum OsType {
+    Ubuntu,
+    Debian,
+    Fedora,
+    Centos,
+    AlmaLinux,
+    Rocky,
+    Arch,
+    Rasbian,
+    Alpine,
+    Unknown,
+}
 pub struct InstallAnswers {
     server_pub_ip: Ipv4Addr,
     server_public_nic: String,
@@ -24,15 +35,14 @@ pub struct InstallAnswers {
 async fn main() {
     let _ = initial_check().await;
 }
-pub fn install_wireguard() {
+pub fn install_wireguard(os: OsType) {
     let answers: InstallAnswers = install_question();
-    let os = std::env::var("OS").unwrap();
-    let cmds = match os.as_str() {
-        "debian" | "ubuntu" => vec![
+    let cmds = match os {
+        OsType::Debian | OsType::Ubuntu | OsType::Rasbian => vec![
             "apt-get update",
             "apt-get install -y wireguard iptables resolvconf qrencode",
         ],
-        "fedora" => {
+        OsType::Fedora => {
             if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() > 32 {
                 vec![
                     "dnf install -y dnf-plugins-core",
@@ -43,7 +53,7 @@ pub fn install_wireguard() {
                 vec!["dnf install -y wireguard-tools iptables qrencode"]
             }
         }
-        "centos" | "almalinux" | "rocky" => {
+        OsType::Centos | OsType::AlmaLinux | OsType::Rocky => {
             let version_id: String = std::env::var("VERSION_ID").unwrap();
             if version_id.starts_with("8") {
                 vec![
@@ -55,9 +65,9 @@ pub fn install_wireguard() {
                 vec!["yum install -y wireguard-tools iptables"]
             }
         }
-        "arch" => vec!["pacman -S --needed --noconfirm wireguard-tools qrencode"],
-        "alpine" => vec!["apk add wireguard-tools iptables libqrencode-tools"],
-        _ => {
+        OsType::Arch => vec!["pacman -S --needed --noconfirm wireguard-tools qrencode"],
+        OsType::Alpine => vec!["apk add wireguard-tools iptables libqrencode-tools"],
+        OsType::Unknown => {
             eprintln!("Unrecognized OS");
             std::process::exit(1)
         }
@@ -195,7 +205,7 @@ pub fn install_question() -> InstallAnswers {
         server_wg_port: server_port.parse::<u16>().unwrap(),
         client_dns_1: Ipv4Addr::from_str(client_dns_1.as_str()).unwrap(),
         client_dns_2: Ipv4Addr::from_str(client_dns_2.as_str()).unwrap(),
-        allowed_ips
+        allowed_ips,
     };
     println!(
         r#"
@@ -228,9 +238,9 @@ pub async fn initial_check() -> io::Result<()> {
     Ok(())
 }
 pub fn check_os() -> io::Result<()> {
-    let os: String = get_os();
-    match os.as_str() {
-        "debian" | "rasbian" => {
+    let os = get_os();
+    match os {
+        OsType::Debian | OsType::Rasbian => {
             let version = std::env::var("VERSION_ID").unwrap();
             if version
                 .parse::<u8>()
@@ -241,7 +251,7 @@ pub fn check_os() -> io::Result<()> {
                 std::process::exit(1);
             }
         }
-        "ubuntu" => {
+        OsType::Ubuntu => {
             let release_year = std::env::var("VERSION_ID")
                 .unwrap()
                 .split_once(".")
@@ -254,21 +264,21 @@ pub fn check_os() -> io::Result<()> {
                 std::process::exit(1)
             }
         }
-        "fedora" => {
+        OsType::Fedora => {
             if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 32 {
                 eprintln!("Please use Fedora 32 or later");
                 std::process::exit(1)
             }
         }
-        "centos" | "almalinux" | "rocky" => {
+        OsType::Centos | OsType::AlmaLinux | OsType::Rocky => {
             if std::env::var("VERSION_ID").unwrap().parse::<u8>().unwrap() < 7 {
                 eprintln!("Please use CentOS 8 or later");
                 std::process::exit(1)
             }
         }
-        "arch" => print!(""),
-        "alpine" => print!(""),
-        _ => {
+        OsType::Arch => print!(""),
+        OsType::Alpine => print!(""),
+        OsType::Unknown => {
             eprintln!(
                 "Looks like you aren't running this installer on a Debian, Ubuntu, Fedora, CentOS, AlmaLinux or Arch Linux system"
             );
@@ -277,21 +287,27 @@ pub fn check_os() -> io::Result<()> {
     }
     Ok(())
 }
-pub fn get_os() -> String {
+pub fn get_os() -> OsType {
     dotenv::from_path("/etc/os-release").unwrap();
     let os = match std::env::var("NAME") {
         Ok(os) => os.to_lowercase(),
         Err(e) => {
             eprintln!("Something went wrong getting OS information, please check supported OSes.");
             eprintln!("If your os is supported one, please report it.");
-            eprintln!("{}",e);
+            eprintln!("{}", e);
             std::process::exit(1);
         }
     };
-    unsafe {
-        std::env::set_var("OS", &os);
+    match os.as_str() {
+        "debian" | "rasbian" => OsType::Debian,
+        "ubuntu" => OsType::Ubuntu,
+        "fedora" => OsType::Fedora,
+        "centos" => OsType::Centos,
+        "almalinux" => OsType::AlmaLinux,
+        "rocky" => OsType::Rocky,
+        "arch" => OsType::Arch,
+        _ => OsType::Unknown,
     }
-    os
 }
 pub async fn check_virtualization() -> io::Result<()> {
     let virtualiation = heim_virt::detect().await.unwrap();
