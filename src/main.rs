@@ -165,8 +165,9 @@ pub fn check_os() {
                 eprintln!("Please use CentOS 8 or later");
                 std::process::exit(1)
             }
-        },
+        }
         "arch" => print!(""),
+        "alpine" => print!(""),
         _ => {
             eprintln!(
                 "Looks like you aren't running this installer on a Debian, Ubuntu, Fedora, CentOS, AlmaLinux, Oracle or Arch Linux system"
