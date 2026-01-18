@@ -2,12 +2,15 @@ use dialoguer::Input;
 use rand::prelude::IndexedRandom;
 use std::fs;
 use std::io;
+use std::net::Ipv6Addr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::str::FromStr;
 use tokio;
 
 pub struct InstallAnswers {
     server_pub_ip: String,
+    server_pub_ipv6: Option<String>,
     server_wg_nic: String,
     server_wg_ip: String,
     server_wg_port: u16,
@@ -17,7 +20,7 @@ pub struct InstallAnswers {
 }
 #[tokio::main]
 async fn main() {
-    initialCheck().await;
+    initial_check().await;
 }
 pub fn install_wireguard() {
     let answers: InstallAnswers = install_question();
@@ -125,6 +128,19 @@ pub fn install_question() -> InstallAnswers {
         .default(predicted_server_public_ip.unwrap().into())
         .interact_text()
         .unwrap();
+    let want_ipv6: bool = Input::new()
+        .with_prompt("Do you want to set IPv6?")
+        .default(false)
+        .interact_text()
+        .unwrap();
+    let mut server_public_ipv6: Option<String> = None;
+    if want_ipv6 {
+        server_public_ipv6 = {
+            let ipv4 = std::net::Ipv4Addr::from_str(&server_public_ip).unwrap();
+            let ipv6: Ipv6Addr = ipv4.to_ipv6_mapped();
+            Some(ipv6.to_string())
+        };
+    }
     let server_public_nic: String = Input::new()
         .with_prompt("Public interface: ")
         .default(predicted_server_public_nic.unwrap().into())
@@ -170,6 +186,7 @@ pub fn install_question() -> InstallAnswers {
         .unwrap();
     let answers = InstallAnswers {
         server_pub_ip: server_public_ip,
+        server_pub_ipv6: server_public_ipv6,
         server_wg_ip: server_wg_ip,
         server_wg_nic: server_wg_interface,
         server_wg_port: server_port.parse::<u16>().unwrap(),
@@ -201,12 +218,13 @@ pub fn get_home_dir_for_client(client_name: &String) -> String {
     }
     home_dir
 }
-pub async fn initialCheck() {
-    check_virtualization().await;
-    is_root();
-    check_os();
+pub async fn initial_check() -> std::io::Result<()> {
+    let _ = check_virtualization().await;
+    let _ = is_root();
+    let _ = check_os();
+    Ok(())
 }
-pub fn check_os() {
+pub fn check_os() -> std::io::Result<()> {
     let os: String = get_os();
     match os.as_str() {
         "debian" | "rasbian" => {
@@ -249,11 +267,12 @@ pub fn check_os() {
         "alpine" => print!(""),
         _ => {
             eprintln!(
-                "Looks like you aren't running this installer on a Debian, Ubuntu, Fedora, CentOS, AlmaLinux, Oracle or Arch Linux system"
+                "Looks like you aren't running this installer on a Debian, Ubuntu, Fedora, CentOS, AlmaLinux or Arch Linux system"
             );
             std::process::exit(2);
         }
     }
+    Ok(())
 }
 pub fn get_os() -> String {
     dotenv::from_path("/etc/os-release").unwrap();
@@ -270,7 +289,7 @@ pub fn get_os() -> String {
     }
     os
 }
-pub async fn check_virtualization() {
+pub async fn check_virtualization() -> std::io::Result<()> {
     let virtualiation = heim_virt::detect().await.unwrap();
     if virtualiation == heim_virt::Virtualization::Lxc {
         eprintln!(
@@ -287,11 +306,13 @@ pub async fn check_virtualization() {
         eprintln!("OpenVZ is not supported");
         std::process::exit(1);
     }
+    Ok(())
 }
 
-pub fn is_root() {
+pub fn is_root() -> std::io::Result<()> {
     if unsafe { libc::getuid() } != 0 {
         eprintln!("You must be root to run in a container");
         std::process::exit(1);
-    }
+    };
+    Ok(())
 }
