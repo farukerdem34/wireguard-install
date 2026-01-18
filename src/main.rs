@@ -1,7 +1,11 @@
-use std::io;
 use dialoguer::Input;
 use rand::prelude::IndexedRandom;
+use std::fs;
+use std::io;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use tokio;
+
 pub struct InstallAnswers {
     server_pub_ip: String,
     server_wg_nic: String,
@@ -14,12 +18,11 @@ pub struct InstallAnswers {
 #[tokio::main]
 async fn main() {
     initialCheck().await;
-    let install_answers: InstallAnswers = install_question();
 }
 pub fn install_wireguard() {
     let answers: InstallAnswers = install_question();
     let os = std::env::var("OS").unwrap();
-    let cmd = match os.as_str() {
+    let cmds = match os.as_str() {
         "debian" | "ubuntu" => vec![
             "apt-get update",
             "apt-get install -y wireguard iptables resolvconf qrencode",
@@ -72,7 +75,7 @@ pub fn install_wireguard() {
         eprintln!("Wireguard couldn't installed succesfully. Exiting...");
         std::process::exit(1);
     }
-    
+
     let _ = fs::create_dir("/etc/wireguard");
     fn set_permissions_recursive(path: &Path, mode: u32) -> std::io::Result<()> {
         let metadata = fs::metadata(path)?;
@@ -90,8 +93,7 @@ pub fn install_wireguard() {
 
         Ok(())
     }
-    set_permissions_recursive(Path::new("/etc/wireguard"),0o600).unwrap()
-
+    set_permissions_recursive(Path::new("/etc/wireguard"), 0o600).unwrap()
 }
 pub fn install_question() -> InstallAnswers {
     println!(
@@ -175,11 +177,13 @@ pub fn install_question() -> InstallAnswers {
         client_dns_2: client_dns_2,
         allowed_ips: allowed_ips,
     };
-    println!(r#"
+    println!(
+        r#"
     Okay, that was all I needed. We are ready to setup your WireGuard server now.
     You will be able to generate a client at the end of the installation.
     Press enter to contiune
-    "#);
+    "#
+    );
     io::stdin().read_line(&mut String::new()).unwrap();
     answers
 }
@@ -204,7 +208,6 @@ pub async fn initialCheck() {
 }
 pub fn check_os() {
     let os: String = get_os();
-    dotenv::from_path("/etc/os-release").unwrap();
     match os.as_str() {
         "debian" | "rasbian" => {
             let version = std::env::var("VERSION_ID").unwrap();
