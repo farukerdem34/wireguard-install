@@ -3,9 +3,7 @@ use tokio;
 
 #[tokio::main]
 async fn main() {
-    check_virtualization().await;
-    is_root();
-    check_os();
+    initialCheck().await;
 }
 
 pub fn get_home_dir_for_client(client_name: &String) -> String {
@@ -17,10 +15,15 @@ pub fn get_home_dir_for_client(client_name: &String) -> String {
     let is_dir: bool = path.is_dir();
     if exists && is_dir {
         home_dir = path_string;
-    }else{
+    } else {
         home_dir = "/opt/wireguard-clients.d".to_string();
     }
     home_dir
+}
+pub async fn initialCheck() {
+    check_virtualization().await;
+    is_root();
+    check_os();
 }
 pub fn check_os() {
     let os: String = get_os();
