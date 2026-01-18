@@ -13,6 +13,7 @@ struct InstallAnswers {
 #[tokio::main]
 async fn main() {
     initialCheck().await;
+    let install_answers: InstallAnswers = install_question();
 }
 
 pub fn install_question() -> InstallAnswers {
