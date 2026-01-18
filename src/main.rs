@@ -184,7 +184,9 @@ pub fn get_os() -> String {
             std::process::exit(1);
         }
     };
-
+    unsafe {
+        std::env::set_var("OS", &os);
+    }
     os
 }
 pub async fn check_virtualization() {
