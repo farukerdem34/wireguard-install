@@ -2,22 +2,23 @@ use dialoguer::Input;
 use rand::prelude::IndexedRandom;
 use std::fs;
 use std::io;
-use std::net::Ipv6Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::str::FromStr;
 use tokio;
 
 pub struct InstallAnswers {
-    server_pub_ip: String,
+    server_pub_ip: Ipv4Addr,
     server_pub_ipv6: Option<String>,
     server_wg_nic: String,
-    server_wg_ip: String,
+    server_wg_ip: Ipv4Addr,
     server_wg_port: u16,
-    client_dns_1: String,
-    client_dns_2: String,
+    client_dns_1: Ipv4Addr,
+    client_dns_2: Ipv4Addr,
     allowed_ips: String,
 }
+
 #[tokio::main]
 async fn main() {
     initial_check().await;
@@ -141,40 +142,40 @@ pub fn install_question() -> InstallAnswers {
             Some(ipv6.to_string())
         };
     }
-    let server_public_nic: String = Input::new()
+    let mut server_public_nic: String = Input::new()
         .with_prompt("Public interface: ")
         .default(predicted_server_public_nic.unwrap().into())
         .interact_text()
         .unwrap();
-    let server_wg_interface: String = Input::new()
+    let mut server_wg_interface: String = Input::new()
         .with_prompt("WireGuard interface name: ")
         .default("wg0".to_string().into())
         .interact_text()
         .unwrap();
-    let server_wg_ip: String = Input::new()
+    let mut server_wg_ip: String = Input::new()
         .with_prompt("Server WireGuard IPv4: ")
         .default("10.19.11.1".to_string().into())
         .interact_text()
         .unwrap();
     let mut rng = rand::rng();
-    let numbers: Vec<u16> = (50000..65000).collect();
-    let random_server_port = numbers.choose(&mut rng).unwrap();
-    let server_port: String = Input::new()
+    let mut numbers: Vec<u16> = (50000..65000).collect();
+    let mut random_server_port = numbers.choose(&mut rng).unwrap();
+    let mut server_port: String = Input::new()
         .with_prompt("Server port: ")
         .default(random_server_port.to_string().into())
         .interact_text()
         .unwrap();
-    let client_dns_1: String = Input::new()
+    let mut client_dns_1: String = Input::new()
         .with_prompt("DNS 1: ")
         .default("1.1.1.1".to_string().into())
         .interact_text()
         .unwrap();
-    let client_dns_2: String = Input::new()
+    let mut client_dns_2: String = Input::new()
         .with_prompt("DNS 2: ")
         .default("1.0.0.1".to_string().into())
         .interact_text()
         .unwrap();
-    let allowed_ips: String = Input::new()
+    let mut allowed_ips: String = Input::new()
         .with_prompt(
             r#"
         WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
@@ -185,14 +186,14 @@ pub fn install_question() -> InstallAnswers {
         .interact_text()
         .unwrap();
     let answers = InstallAnswers {
-        server_pub_ip: server_public_ip,
+        server_pub_ip: Ipv4Addr::from_str(server_public_ip.as_str()).unwrap(),
         server_pub_ipv6: server_public_ipv6,
-        server_wg_ip: server_wg_ip,
+        server_wg_ip: Ipv4Addr::from_str(server_wg_ip.as_str()).unwrap(),
         server_wg_nic: server_wg_interface,
         server_wg_port: server_port.parse::<u16>().unwrap(),
-        client_dns_1: client_dns_1,
-        client_dns_2: client_dns_2,
-        allowed_ips: allowed_ips,
+        client_dns_1: Ipv4Addr::from_str(client_dns_1.as_str()).unwrap(),
+        client_dns_2: Ipv4Addr::from_str(client_dns_2.as_str()).unwrap(),
+        allowed_ips: allowed_ips
     };
     println!(
         r#"
