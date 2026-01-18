@@ -10,6 +10,7 @@ use tokio;
 
 pub struct InstallAnswers {
     server_pub_ip: Ipv4Addr,
+    server_public_nic: String,
     server_pub_ipv6: Option<String>,
     server_wg_nic: String,
     server_wg_ip: Ipv4Addr,
@@ -21,7 +22,7 @@ pub struct InstallAnswers {
 
 #[tokio::main]
 async fn main() {
-    initial_check().await;
+    let _ = initial_check().await;
 }
 pub fn install_wireguard() {
     let answers: InstallAnswers = install_question();
@@ -63,7 +64,7 @@ pub fn install_wireguard() {
     };
     for cmd in cmds {
         let words = cmd.split_whitespace().collect::<Vec<&str>>();
-        let command = std::process::Command::new("sh")
+        let _ = std::process::Command::new("sh")
             .arg("-c")
             .args(words)
             .stderr(std::process::Stdio::null())
@@ -81,7 +82,7 @@ pub fn install_wireguard() {
     }
 
     let _ = fs::create_dir("/etc/wireguard");
-    fn set_permissions_recursive(path: &Path, mode: u32) -> std::io::Result<()> {
+    fn set_permissions_recursive(path: &Path, mode: u32) -> io::Result<()> {
         let metadata = fs::metadata(path)?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(mode);
@@ -137,45 +138,45 @@ pub fn install_question() -> InstallAnswers {
     let mut server_public_ipv6: Option<String> = None;
     if want_ipv6 {
         server_public_ipv6 = {
-            let ipv4 = std::net::Ipv4Addr::from_str(&server_public_ip).unwrap();
+            let ipv4 = Ipv4Addr::from_str(&server_public_ip).unwrap();
             let ipv6: Ipv6Addr = ipv4.to_ipv6_mapped();
             Some(ipv6.to_string())
         };
     }
-    let mut server_public_nic: String = Input::new()
+    let server_public_nic: String = Input::new()
         .with_prompt("Public interface: ")
         .default(predicted_server_public_nic.unwrap().into())
         .interact_text()
         .unwrap();
-    let mut server_wg_interface: String = Input::new()
+    let server_wg_interface: String = Input::new()
         .with_prompt("WireGuard interface name: ")
         .default("wg0".to_string().into())
         .interact_text()
         .unwrap();
-    let mut server_wg_ip: String = Input::new()
+    let server_wg_ip: String = Input::new()
         .with_prompt("Server WireGuard IPv4: ")
         .default("10.19.11.1".to_string().into())
         .interact_text()
         .unwrap();
     let mut rng = rand::rng();
-    let mut numbers: Vec<u16> = (50000..65000).collect();
-    let mut random_server_port = numbers.choose(&mut rng).unwrap();
-    let mut server_port: String = Input::new()
+    let numbers: Vec<u16> = (50000..65000).collect();
+    let random_server_port = numbers.choose(&mut rng).unwrap();
+    let server_port: String = Input::new()
         .with_prompt("Server port: ")
         .default(random_server_port.to_string().into())
         .interact_text()
         .unwrap();
-    let mut client_dns_1: String = Input::new()
+    let client_dns_1: String = Input::new()
         .with_prompt("DNS 1: ")
         .default("1.1.1.1".to_string().into())
         .interact_text()
         .unwrap();
-    let mut client_dns_2: String = Input::new()
+    let client_dns_2: String = Input::new()
         .with_prompt("DNS 2: ")
         .default("1.0.0.1".to_string().into())
         .interact_text()
         .unwrap();
-    let mut allowed_ips: String = Input::new()
+    let allowed_ips: String = Input::new()
         .with_prompt(
             r#"
         WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
@@ -187,13 +188,14 @@ pub fn install_question() -> InstallAnswers {
         .unwrap();
     let answers = InstallAnswers {
         server_pub_ip: Ipv4Addr::from_str(server_public_ip.as_str()).unwrap(),
+        server_public_nic,
         server_pub_ipv6: server_public_ipv6,
         server_wg_ip: Ipv4Addr::from_str(server_wg_ip.as_str()).unwrap(),
         server_wg_nic: server_wg_interface,
         server_wg_port: server_port.parse::<u16>().unwrap(),
         client_dns_1: Ipv4Addr::from_str(client_dns_1.as_str()).unwrap(),
         client_dns_2: Ipv4Addr::from_str(client_dns_2.as_str()).unwrap(),
-        allowed_ips: allowed_ips
+        allowed_ips
     };
     println!(
         r#"
@@ -206,10 +208,10 @@ pub fn install_question() -> InstallAnswers {
     answers
 }
 pub fn get_home_dir_for_client(client_name: &String) -> String {
-    let mut home_dir: String = String::new();
+    let home_dir: String;
 
     let path_string = format!("/home/{}", &client_name);
-    let path = std::path::Path::new(&path_string);
+    let path = Path::new(&path_string);
     let exists: bool = path.exists();
     let is_dir: bool = path.is_dir();
     if exists && is_dir {
@@ -219,13 +221,13 @@ pub fn get_home_dir_for_client(client_name: &String) -> String {
     }
     home_dir
 }
-pub async fn initial_check() -> std::io::Result<()> {
+pub async fn initial_check() -> io::Result<()> {
     let _ = check_virtualization().await;
     let _ = is_root();
     let _ = check_os();
     Ok(())
 }
-pub fn check_os() -> std::io::Result<()> {
+pub fn check_os() -> io::Result<()> {
     let os: String = get_os();
     match os.as_str() {
         "debian" | "rasbian" => {
@@ -282,6 +284,7 @@ pub fn get_os() -> String {
         Err(e) => {
             eprintln!("Something went wrong getting OS information, please check supported OSes.");
             eprintln!("If your os is supported one, please report it.");
+            eprintln!("{}",e);
             std::process::exit(1);
         }
     };
@@ -290,7 +293,7 @@ pub fn get_os() -> String {
     }
     os
 }
-pub async fn check_virtualization() -> std::io::Result<()> {
+pub async fn check_virtualization() -> io::Result<()> {
     let virtualiation = heim_virt::detect().await.unwrap();
     if virtualiation == heim_virt::Virtualization::Lxc {
         eprintln!(
@@ -310,7 +313,7 @@ pub async fn check_virtualization() -> std::io::Result<()> {
     Ok(())
 }
 
-pub fn is_root() -> std::io::Result<()> {
+pub fn is_root() -> io::Result<()> {
     if unsafe { libc::getuid() } != 0 {
         eprintln!("You must be root to run in a container");
         std::process::exit(1);
