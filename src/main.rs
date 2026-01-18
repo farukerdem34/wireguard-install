@@ -176,8 +176,8 @@ pub fn check_os() {
 }
 pub fn get_os() -> String {
     dotenv::from_path("/etc/os-release").unwrap();
-    let os = match std::env::var("OS") {
-        Ok(os) => os,
+    let os = match std::env::var("NAME") {
+        Ok(os) => os.to_lowercase(),
         Err(e) => {
             eprintln!("Something went wrong getting OS information, please check supported OSes.");
             eprintln!("If your os is supported one, please report it.");
