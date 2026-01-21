@@ -1,13 +1,11 @@
 use dialoguer::Input;
-use rand::prelude::IndexedRandom;
+use rand::Rng;
 use std::fs;
 use std::io;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use rand::Rng;
-use tokio;
 pub enum OsType {
     Ubuntu,
     Debian,
@@ -44,7 +42,12 @@ pub fn install_wireguard(os: OsType) {
             "apt-get install -y wireguard iptables resolvconf qrencode",
         ],
         OsType::Fedora => {
-            if std::env::var("VERSION_ID").expect("Failed to get version ID environment variable").parse::<u8>().expect("Failed to parse Fedora version ID") > 32 {
+            if std::env::var("VERSION_ID")
+                .expect("Failed to get version ID environment variable")
+                .parse::<u8>()
+                .expect("Failed to parse Fedora version ID")
+                > 32
+            {
                 vec![
                     "dnf install -y dnf-plugins-core",
                     "dnf copr enable -y jdoss/wireguard",
@@ -55,7 +58,8 @@ pub fn install_wireguard(os: OsType) {
             }
         }
         OsType::Centos | OsType::AlmaLinux | OsType::Rocky => {
-            let version_id: String = std::env::var("VERSION_ID").expect("Failed to get version ID environment variable");
+            let version_id: String =
+                std::env::var("VERSION_ID").expect("Failed to get version ID environment variable");
             if version_id.starts_with("8") {
                 vec![
                     "yum install -y epel-release elrepo-release",
@@ -93,25 +97,28 @@ pub fn install_wireguard(os: OsType) {
     }
 
     let _ = fs::create_dir("/etc/wireguard");
-    fn set_permissions_recursive(path: &Path, mode: u32) -> io::Result<()> {
-        // TO DO
-        // Directories must have execute permission
+    fn set_permissions_recursive(path: &Path) -> io::Result<()> {
         let metadata = fs::metadata(path)?;
         let mut permissions = metadata.permissions();
-        permissions.set_mode(mode);
+        if metadata.is_dir() {
+            permissions.set_mode(0o700);
+        } else {
+            permissions.set_mode(0o600);
+        }
         fs::set_permissions(path, permissions)?;
 
         if metadata.is_dir() {
             for entry in fs::read_dir(path)? {
                 let entry = entry?;
                 let entry_path = entry.path();
-                set_permissions_recursive(&entry_path, mode)?;
+                set_permissions_recursive(&entry_path)?;
             }
         }
 
         Ok(())
     }
-    set_permissions_recursive(Path::new("/etc/wireguard"), 0o600).expect("Failed to set permission to /etc/wireguard 600")
+    set_permissions_recursive(Path::new("/etc/wireguard"))
+        .expect("Failed to set permissions on /etc/wireguard")
 }
 pub fn install_question() -> InstallAnswers {
     println!(
@@ -140,7 +147,7 @@ pub fn install_question() -> InstallAnswers {
     };
     let server_public_ip: String = Input::new()
         .with_prompt("IPv4 public address: ")
-        .default(predicted_server_public_ip.unwrap().into())
+        .default(predicted_server_public_ip.unwrap())
         .interact_text()
         .unwrap();
     let want_ipv6: bool = Input::new()
@@ -165,17 +172,17 @@ pub fn install_question() -> InstallAnswers {
     }
     let server_public_nic: String = Input::new()
         .with_prompt("Public interface: ")
-        .default(predicted_server_public_nic.unwrap().into())
+        .default(predicted_server_public_nic.unwrap())
         .interact_text()
         .unwrap();
     let server_wg_interface: String = Input::new()
         .with_prompt("WireGuard interface name: ")
-        .default("wg0".to_string().into())
+        .default("wg0".to_string())
         .interact_text()
         .unwrap();
     let server_wg_ip: String = Input::new()
         .with_prompt("Server WireGuard IPv4: ")
-        .default("10.19.11.1".to_string().into())
+        .default("10.19.11.1".to_string())
         .interact_text()
         .unwrap();
     // let mut rng = rand::rng();
@@ -184,17 +191,17 @@ pub fn install_question() -> InstallAnswers {
     let random_server_port = rand::rng().random_range(50000..65000);
     let server_port: String = Input::new()
         .with_prompt("Server port: ")
-        .default(random_server_port.to_string().into())
+        .default(random_server_port.to_string())
         .interact_text()
         .unwrap();
     let client_dns_1: String = Input::new()
         .with_prompt("DNS 1: ")
-        .default("1.1.1.1".to_string().into())
+        .default("1.1.1.1".to_string())
         .interact_text()
         .unwrap();
     let client_dns_2: String = Input::new()
         .with_prompt("DNS 2: ")
-        .default("1.0.0.1".to_string().into())
+        .default("1.0.0.1".to_string())
         .interact_text()
         .unwrap();
     let allowed_ips: String = Input::new()
@@ -204,11 +211,12 @@ pub fn install_question() -> InstallAnswers {
         Allowed IPs list for generated clients (leave default to route everything):
         "#,
         )
-        .default("0.0.0.0/0".to_string().into())
+        .default("0.0.0.0/0".to_string())
         .interact_text()
         .unwrap();
     let answers = InstallAnswers {
-        server_pub_ip: Ipv4Addr::from_str(server_public_ip.as_str()).expect("Failed to parse public IPv4 address"),
+        server_pub_ip: Ipv4Addr::from_str(server_public_ip.as_str())
+            .expect("Failed to parse public IPv4 address"),
         server_public_nic,
         server_pub_ipv6: server_public_ipv6,
         server_wg_ip: Ipv4Addr::from_str(server_wg_ip.as_str()).expect("Failed to parse wg0 IP"),
@@ -229,16 +237,15 @@ pub fn install_question() -> InstallAnswers {
     answers
 }
 pub fn get_home_dir_for_client(client_name: &String) -> PathBuf {
-    let home_dir: PathBuf;
-
     let path = PathBuf::from("/home/").join(client_name);
     let exists: bool = path.exists();
     let is_dir: bool = path.is_dir();
-    if exists && is_dir {
-        home_dir = path;
+    let home_dir: PathBuf = if exists && is_dir {
+        path
     } else {
-        home_dir = PathBuf::from_str("/etc/wireguard/clients.d/").expect("Failed to acces /etc/wireguard/clients.d");
-    }
+        PathBuf::from_str("/etc/wireguard/clients.d/")
+            .expect("Failed to acces /etc/wireguard/clients.d")
+    };
     home_dir
 }
 pub async fn initial_check() -> io::Result<()> {
@@ -262,29 +269,36 @@ pub fn check_os() -> io::Result<()> {
             }
         }
         OsType::Ubuntu => {
-            let release_year = {
-                let version_id = std::env::var("VERSION_ID").expect("Failed to get version ID");
-                let major = version_id
-                    .split(".")
-                    .next()
-                    .expect("Failed to get major version id")
-                    .parse::<u8>()
-                    .expect("Failed to parse version ID");
-                major
-            };
+            let version_id = std::env::var("VERSION_ID").expect("Failed to get version ID");
+            let release_year = version_id
+                .split(".")
+                .next()
+                .expect("Failed to get major version id")
+                .parse::<u8>()
+                .expect("Failed to parse version ID");
             if release_year < 18 {
                 eprintln!("Please use Ubuntu 18 or later");
                 std::process::exit(1)
             }
         }
         OsType::Fedora => {
-            if std::env::var("VERSION_ID").expect("Failed to get version ID").parse::<u8>().expect("Failed to parse Fedora version ID") < 32 {
+            if std::env::var("VERSION_ID")
+                .expect("Failed to get version ID")
+                .parse::<u8>()
+                .expect("Failed to parse Fedora version ID")
+                < 32
+            {
                 eprintln!("Please use Fedora 32 or later");
                 std::process::exit(1)
             }
         }
         OsType::Centos | OsType::AlmaLinux | OsType::Rocky => {
-            if std::env::var("VERSION_ID").expect("Failed to get version ID").parse::<u8>().expect("Failed to parse version ID") < 7 {
+            if std::env::var("VERSION_ID")
+                .expect("Failed to get version ID")
+                .parse::<u8>()
+                .expect("Failed to parse version ID")
+                < 7
+            {
                 eprintln!("Please use CentOS 8 or later");
                 std::process::exit(1)
             }
@@ -301,7 +315,8 @@ pub fn check_os() -> io::Result<()> {
     Ok(())
 }
 pub fn get_os() -> OsType {
-    dotenv::from_path("/etc/os-release").expect("Failed to load /etc/os-release environment variable");
+    dotenv::from_path("/etc/os-release")
+        .expect("Failed to load /etc/os-release environment variable");
     let os = match std::env::var("NAME") {
         Ok(os) => os.to_lowercase(),
         Err(e) => {
@@ -323,7 +338,9 @@ pub fn get_os() -> OsType {
     }
 }
 pub async fn check_virtualization() -> io::Result<()> {
-    let virtualiation = heim_virt::detect().await.expect("Failed to detect virtualization");
+    let virtualiation = heim_virt::detect()
+        .await
+        .expect("Failed to detect virtualization");
     if virtualiation == heim_virt::Virtualization::Lxc {
         eprintln!(
             r#"
