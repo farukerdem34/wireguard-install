@@ -3,6 +3,7 @@ use crate::enums::OsType;
 use crate::models::InstallAnswers;
 use crate::utils::set_permissions_recursive;
 use dialoguer::Input;
+use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -79,6 +80,118 @@ pub fn create_pub_priv_keys() -> Result<(String, String), String> {
         .map_err(|e| format!("Failed to generate public key: {}", e))?;
 
     Ok((private_key, public_key))
+}
+
+/// Detect the server's public IP address using external services
+fn detect_public_ip() -> Result<String, String> {
+    println!("Detecting server's public IP address...");
+
+    // List of reliable IP detection services to try
+    let services = [
+        "https://ipv4.icanhazip.com",
+        "https://api.ipify.org",
+        "https://checkip.amazonaws.com",
+    ];
+
+    // Try each service with curl command
+    for service in &services {
+        let output = process::Command::new("curl")
+            .args(["-s", "--connect-timeout", "10", service])
+            .output();
+
+        if let Ok(output) = output {
+            if output.status.success() {
+                let ip = String::from_utf8(output.stdout)
+                    .map_err(|e| format!("Failed to parse IP response: {}", e))?
+                    .trim()
+                    .to_string();
+
+                // Basic validation - check if it looks like an IPv4 address
+                if ip.parse::<Ipv4Addr>().is_ok() && !ip.is_empty() {
+                    println!("Detected public IP: {}", ip);
+                    return Ok(ip);
+                }
+            }
+        }
+    }
+
+    Err("Failed to detect public IP from all services".to_string())
+}
+
+/// Check if a network interface exists using netwatcher
+fn interface_exists(name: &str) -> bool {
+    if let Ok(interfaces) = netwatcher::list_interfaces() {
+        return interfaces.iter().any(|(_, iface)| iface.name == name);
+    }
+    false
+}
+
+/// Find the default route interface using system commands
+fn find_default_route_interface() -> Result<String, String> {
+    // Try route command first (more widely available)
+    if let Ok(output) = process::Command::new("route")
+        .args(["-n", "get", "default"])
+        .output()
+    {
+        if output.status.success() {
+            let route_output = String::from_utf8_lossy(&output.stdout);
+            // Look for "interface: " line in route output
+            for line in route_output.lines() {
+                if line.trim().starts_with("interface:") {
+                    let interface = line.split_whitespace().nth(1).unwrap_or("").trim();
+                    if !interface.is_empty() && interface_exists(interface) {
+                        return Ok(interface.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Try netstat as alternative
+    if let Ok(output) = process::Command::new("netstat").args(["-rn"]).output() {
+        if output.status.success() {
+            let netstat_output = String::from_utf8_lossy(&output.stdout);
+            // Look for default route (0.0.0.0 or 0/0)
+            for line in netstat_output.lines() {
+                if line.starts_with("0.0.0.0") || line.starts_with("default") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 6 {
+                        // Interface is typically the last field in route table
+                        let interface = parts[parts.len() - 1];
+                        if interface_exists(interface) {
+                            return Ok(interface.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err("Could not determine default route interface".to_string())
+}
+
+/// Detect the primary network interface used for internet connectivity
+fn detect_primary_interface() -> Result<String, String> {
+    println!("Detecting primary network interface...");
+
+    // First try to find the actual default route interface
+    if let Ok(interface) = find_default_route_interface() {
+        println!("Detected interface via default route: {}", interface);
+        return Ok(interface);
+    }
+
+    // Fallback: try common interface names in priority order
+    let candidates = ["ens3", "ens5", "enp0s3", "eth0", "ens160", "wlan0"];
+
+    println!("Checking common interface names...");
+    for &name in &candidates {
+        if interface_exists(name) {
+            println!("Found existing interface: {}", name);
+            return Ok(name.to_string());
+        }
+    }
+
+    Err("Could not detect any suitable network interface".to_string())
 }
 
 /// Enum to represent the detected firewall system
@@ -508,8 +621,20 @@ pub fn install_question() -> InstallAnswers {
 
     "#
     );
-    let predicted_server_public_ip = "192.168.1.1".to_string(); // mocked prediction
-    let predicted_server_public_nic = "eth0".to_string(); // mocked NIC
+    let predicted_server_public_ip = detect_public_ip().unwrap_or_else(|err| {
+        println!(
+            "Could not auto-detect public IP ({}), using fallback: 203.0.113.1",
+            err
+        );
+        "203.0.113.1".to_string()
+    });
+    let predicted_server_public_nic = detect_primary_interface().unwrap_or_else(|err| {
+        println!(
+            "Could not auto-detect network interface ({}), using fallback: eth0",
+            err
+        );
+        "eth0".to_string()
+    });
     let server_public_ip: String = Input::new()
         .with_prompt("IPv4 public address: ")
         .default(predicted_server_public_ip)
