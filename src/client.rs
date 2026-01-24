@@ -33,6 +33,310 @@ pub struct ClientConfig {
     pub ipv4: Ipv4Addr,
     pub ipv6: Option<String>,
     pub home_dir: PathBuf,
+    pub use_dns: bool,
+}
+
+/// Validate IPv4 address is in server subnet and not in use
+fn validate_ipv4_address(
+    ip: &str,
+    server_ipv4: &Ipv4Addr,
+    server_wg_nic: &str,
+) -> Result<Ipv4Addr, String> {
+    // Parse the IP address
+    let parsed_ip = ip
+        .parse::<Ipv4Addr>()
+        .map_err(|_| "Invalid IPv4 address format".to_string())?;
+
+    // Extract base IP (first 3 octets) from server IP
+    let server_octets = server_ipv4.octets();
+    let server_base = format!(
+        "{}.{}.{}",
+        server_octets[0], server_octets[1], server_octets[2]
+    );
+
+    let parsed_octets = parsed_ip.octets();
+    let parsed_base = format!(
+        "{}.{}.{}",
+        parsed_octets[0], parsed_octets[1], parsed_octets[2]
+    );
+
+    // Check if IP is in same subnet
+    if server_base != parsed_base {
+        return Err(format!("IP address must be in subnet {}.x", server_base));
+    }
+
+    // Check if it's the server's IP
+    if parsed_ip == *server_ipv4 {
+        return Err("Cannot use server's IP address".to_string());
+    }
+
+    // Check if IP is already in use
+    let config_path = format!("/etc/wireguard/{}.conf", server_wg_nic);
+    if let Ok(config_content) = fs::read_to_string(&config_path) {
+        let search_pattern = format!("{}/32", parsed_ip);
+        if config_content.contains(&search_pattern) {
+            return Err(format!("IP address {} is already in use", parsed_ip));
+        }
+    }
+
+    Ok(parsed_ip)
+}
+
+/// Validate IPv6 address is in server subnet and not in use
+fn validate_ipv6_address(
+    ip: &str,
+    server_ipv6: &str,
+    server_wg_nic: &str,
+) -> Result<String, String> {
+    // Basic IPv6 format validation (simplified)
+    if !ip.contains("::") {
+        return Err("Invalid IPv6 address format (must contain '::')".to_string());
+    }
+
+    // Extract base IPv6 (everything before ::)
+    let server_base = if let Some((prefix, _)) = server_ipv6.split_once("::") {
+        prefix
+    } else {
+        return Err("Invalid server IPv6 configuration".to_string());
+    };
+
+    let parsed_base = if let Some((prefix, _)) = ip.split_once("::") {
+        prefix
+    } else {
+        return Err("Invalid IPv6 address format".to_string());
+    };
+
+    // Check if IP is in same subnet
+    if server_base != parsed_base {
+        return Err(format!("IPv6 address must be in subnet {}::x", server_base));
+    }
+
+    // Check if it's the server's IPv6
+    if ip == server_ipv6 {
+        return Err("Cannot use server's IPv6 address".to_string());
+    }
+
+    // Check if IP is already in use
+    let config_path = format!("/etc/wireguard/{}.conf", server_wg_nic);
+    if let Ok(config_content) = fs::read_to_string(&config_path) {
+        let search_pattern = format!("{}/128", ip);
+        if config_content.contains(&search_pattern) {
+            return Err(format!("IPv6 address {} is already in use", ip));
+        }
+    }
+
+    Ok(ip.to_string())
+}
+
+/// Prompt user for client IPv4 address with suggestion
+fn prompt_for_client_ipv4(server_ipv4: &Ipv4Addr, server_wg_nic: &str) -> Result<Ipv4Addr, String> {
+    // Find suggested IP
+    let suggested_ip = find_available_ipv4(server_ipv4, server_wg_nic)?;
+
+    // Extract subnet info for display
+    let octets = server_ipv4.octets();
+    let subnet = format!("{}.{}.{}", octets[0], octets[1], octets[2]);
+
+    println!("");
+    println!("IPv4 Address Configuration");
+    println!("");
+    println!("Server subnet: {}.x", subnet);
+    println!("Suggested next available IP address: {}", suggested_ip);
+
+    loop {
+        let choice = Select::new()
+            .with_prompt("Choose IPv4 address option")
+            .items(&[
+                "Use suggested IP address (recommended)",
+                "Enter custom IP address",
+            ])
+            .default(0)
+            .interact()
+            .map_err(|e| format!("Selection error: {}", e))?;
+
+        match choice {
+            0 => {
+                // Use suggested IP
+                println!("✓ Using IP address: {}", suggested_ip);
+                return Ok(suggested_ip);
+            }
+            1 => {
+                // Custom IP input
+                let custom_ip: String = Input::new()
+                    .with_prompt(&format!(
+                        "Enter custom IPv4 address (must be in {}.x)",
+                        subnet
+                    ))
+                    .interact()
+                    .map_err(|e| format!("Input error: {}", e))?;
+
+                match validate_ipv4_address(&custom_ip, server_ipv4, server_wg_nic) {
+                    Ok(ip) => {
+                        println!("✓ Using IP address: {}", ip);
+                        return Ok(ip);
+                    }
+                    Err(e) => {
+                        println!("");
+                        println!("❌ {}", e);
+                        println!("Please try again.");
+                        println!("");
+                        continue;
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Prompt user for client IPv6 address with suggestion (when IPv6 is available)
+/// Returns None if IPv6 is not configured or user chooses to skip
+fn prompt_for_client_ipv6(
+    server_ipv6: Option<&String>,
+    server_wg_nic: &str,
+) -> Result<Option<String>, String> {
+    // If no server IPv6 configured, return None
+    let server_ipv6_str = match server_ipv6 {
+        Some(ipv6) => ipv6,
+        None => return Ok(None),
+    };
+
+    // Find suggested IPv6
+    let suggested_ipv6 = find_available_ipv6(Some(server_ipv6_str), server_wg_nic);
+
+    // Extract subnet info for display
+    let subnet_prefix = if let Some((prefix, _)) = server_ipv6_str.split_once("::") {
+        prefix
+    } else {
+        "invalid"
+    };
+
+    println!("");
+    println!("IPv6 Address Configuration");
+    println!("");
+    println!("Server IPv6 subnet: {}::x", subnet_prefix);
+
+    if let Some(suggested) = &suggested_ipv6 {
+        println!("Suggested next available IPv6 address: {}", suggested);
+
+        let choice = Select::new()
+            .with_prompt("Choose IPv6 address option")
+            .items(&[
+                "Use suggested IPv6 address (recommended)",
+                "Enter custom IPv6 address",
+                "Skip IPv6 configuration",
+            ])
+            .default(0)
+            .interact()
+            .map_err(|e| format!("Selection error: {}", e))?;
+
+        match choice {
+            0 => {
+                // Use suggested IPv6
+                println!("✓ Using IPv6 address: {}", suggested);
+                Ok(Some(suggested.clone()))
+            }
+            1 => {
+                // Custom IPv6 input
+                loop {
+                    let custom_ipv6: String = Input::new()
+                        .with_prompt(&format!(
+                            "Enter custom IPv6 address (must be in {}::x)",
+                            subnet_prefix
+                        ))
+                        .interact()
+                        .map_err(|e| format!("Input error: {}", e))?;
+
+                    match validate_ipv6_address(&custom_ipv6, server_ipv6_str, server_wg_nic) {
+                        Ok(ip) => {
+                            println!("✓ Using IPv6 address: {}", ip);
+                            return Ok(Some(ip));
+                        }
+                        Err(e) => {
+                            println!("");
+                            println!("❌ {}", e);
+                            println!("Please try again.");
+                            println!("");
+                            // Continue loop
+                        }
+                    }
+                }
+            }
+            2 => {
+                // Skip IPv6
+                println!("✓ IPv6 configuration skipped");
+                Ok(None)
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        println!("ℹ️  No IPv6 addresses available in subnet");
+
+        let choice = Select::new()
+            .with_prompt("Choose IPv6 option")
+            .items(&["Enter custom IPv6 address", "Skip IPv6 configuration"])
+            .default(1)
+            .interact()
+            .map_err(|e| format!("Selection error: {}", e))?;
+
+        match choice {
+            0 => {
+                // Custom IPv6 input
+                loop {
+                    let custom_ipv6: String = Input::new()
+                        .with_prompt(&format!(
+                            "Enter custom IPv6 address (must be in {}::x)",
+                            subnet_prefix
+                        ))
+                        .interact()
+                        .map_err(|e| format!("Input error: {}", e))?;
+
+                    match validate_ipv6_address(&custom_ipv6, server_ipv6_str, server_wg_nic) {
+                        Ok(ip) => {
+                            println!("✓ Using IPv6 address: {}", ip);
+                            return Ok(Some(ip));
+                        }
+                        Err(e) => {
+                            println!("");
+                            println!("❌ {}", e);
+                            println!("Please try again.");
+                            println!("");
+                            // Continue loop
+                        }
+                    }
+                }
+            }
+            1 => {
+                // Skip IPv6
+                println!("✓ IPv6 configuration skipped");
+                Ok(None)
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Prompt user whether to include DNS configuration
+fn prompt_for_dns_usage() -> Result<bool, String> {
+    println!("");
+    println!("DNS Configuration");
+    println!("");
+    println!("Do you want to include DNS settings in the client configuration?");
+    println!("This will automatically route DNS queries through the VPN.");
+
+    let use_dns = Confirm::new()
+        .with_prompt("Include DNS configuration")
+        .default(true)
+        .interact()
+        .map_err(|e| format!("Selection error: {}", e))?;
+
+    if use_dns {
+        println!("✓ DNS configuration will be included");
+    } else {
+        println!("✓ DNS configuration will be excluded");
+    }
+
+    Ok(use_dns)
 }
 
 /// Main entry point for creating a new WireGuard client
@@ -54,17 +358,21 @@ pub fn new_client() -> Result<(), String> {
 
     let client_name = prompt_and_validate_client_name(&params.server_wg_nic)?;
 
-    // Step 3: Find available IP addresses
-    let client_ipv4 = find_available_ipv4(&params.server_wg_ipv4, &params.server_wg_nic)?;
-    let client_ipv6 = find_available_ipv6(params.server_wg_ipv6.as_ref(), &params.server_wg_nic);
+    // Step 3: Interactive IP address configuration
+    let client_ipv4 = prompt_for_client_ipv4(&params.server_wg_ipv4, &params.server_wg_nic)?;
+    let client_ipv6 =
+        prompt_for_client_ipv6(params.server_wg_ipv6.as_ref(), &params.server_wg_nic)?;
 
-    // Step 4: Generate client keys
+    // Step 4: DNS configuration choice
+    let use_dns = prompt_for_dns_usage()?;
+
+    // Step 5: Generate client keys
     let (client_private_key, client_public_key, client_preshared_key) = generate_client_keys()?;
 
-    // Step 5: Get home directory for client
+    // Step 6: Get home directory for client
     let home_dir = get_home_dir_for_client(&client_name)?;
 
-    // Step 6: Create client configuration
+    // Step 7: Create client configuration
     let client_config = ClientConfig {
         name: client_name.clone(),
         private_key: client_private_key,
@@ -73,18 +381,19 @@ pub fn new_client() -> Result<(), String> {
         ipv4: client_ipv4,
         ipv6: client_ipv6,
         home_dir,
+        use_dns,
     };
 
-    // Step 7: Create configuration file
+    // Step 8: Create configuration file
     create_client_config_file(&client_config, &params)?;
 
-    // Step 8: Add client to server configuration
+    // Step 9: Add client to server configuration
     add_client_to_server_config(&client_config, &params)?;
 
-    // Step 9: Sync WireGuard configuration
+    // Step 10: Sync WireGuard configuration
     sync_wireguard_config(&params.server_wg_nic)?;
 
-    // Step 10: Generate QR code
+    // Step 11: Generate QR code
     let config_path = client_config.home_dir.join(format!(
         "{}-client-{}.conf",
         params.server_wg_nic, client_config.name
@@ -400,11 +709,18 @@ fn create_client_config_file(
         None => format!("{}/32", client.ipv4),
     };
 
+    // Build DNS line - conditionally include based on user preference
+    let dns_line = if client.use_dns {
+        format!("DNS = {},{}\n", params.client_dns_1, params.client_dns_2)
+    } else {
+        String::new()
+    };
+
     let config_content = format!(
         "[Interface]\n\
          PrivateKey = {}\n\
          Address = {}\n\
-         DNS = {},{}\n\n\
+         {}\n\
          # Uncomment the next line to set a custom MTU\n\
          # This might impact performance, so use it only if you know what you are doing\n\
          # See https://github.com/nitred/nr-wg-mtu-finder to find your optimal MTU\n\
@@ -416,8 +732,7 @@ fn create_client_config_file(
          AllowedIPs = {}",
         client.private_key,
         address_line,
-        params.client_dns_1,
-        params.client_dns_2,
+        dns_line,
         params.server_pub_key,
         client.preshared_key,
         endpoint,
