@@ -2,6 +2,7 @@ use crate::client::{load_wireguard_params, WireguardParams};
 use crate::enums::OsType;
 use crate::models::VersionInfo;
 use crate::os_detection::get_os_with_version;
+use crate::utils::clear_terminal;
 use dialoguer::{Confirm, Select};
 use std::fs;
 use std::path::Path;
@@ -28,6 +29,7 @@ pub fn uninstall_wireguard() -> Result<(), String> {
     // Step 2: Show warning and get user confirmation
     if !confirm_uninstall()? {
         println!("🚫 Uninstall cancelled by user");
+        clear_terminal();
         return Ok(());
     }
 
@@ -36,6 +38,9 @@ pub fn uninstall_wireguard() -> Result<(), String> {
     if backup_requested {
         backup_configuration(&wg_config)?;
     }
+
+    // Clear terminal after user interactions
+    clear_terminal();
 
     println!("🔧 Starting WireGuard uninstallation...");
 

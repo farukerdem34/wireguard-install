@@ -1,3 +1,4 @@
+use crate::utils::{clear_terminal, wait_for_key_press_with_message};
 use dialoguer::{Confirm, Input, Select};
 use qrcode::render::unicode;
 use qrcode::QrCode;
@@ -444,6 +445,19 @@ pub fn new_client() -> Result<(), String> {
     // Step 5: Allowed IPs configuration
     let allowed_ips = prompt_for_allowed_ips()?;
 
+    // Clear terminal after all user inputs are collected and before processing
+    clear_terminal();
+
+    println!("🔧 Processing client configuration...");
+    println!("✓ Client name: {}", client_name);
+    println!("✓ IPv4 address: {}", client_ipv4);
+    if let Some(ref ipv6) = client_ipv6 {
+        println!("✓ IPv6 address: {}", ipv6);
+    }
+    println!("✓ DNS enabled: {}", use_dns);
+    println!("✓ Allowed IPs: {}", allowed_ips);
+    println!();
+
     // Step 6: Generate client keys
     let (client_private_key, client_public_key, client_preshared_key) = generate_client_keys()?;
 
@@ -472,14 +486,39 @@ pub fn new_client() -> Result<(), String> {
     // Step 11: Sync WireGuard configuration
     sync_wireguard_config(&params.server_wg_nic)?;
 
-    // Step 12: Generate QR code
+    // Step 12: Generate QR code and show configuration
     let config_path = client_config.home_dir.join(format!(
         "{}-client-{}.conf",
         params.server_wg_nic, client_config.name
     ));
-    generate_qr_code(&config_path)?;
 
-    println!("Your client config file is in {}", config_path.display());
+    // Display configuration information
+    println!("");
+    println!("✅ Client '{}' created successfully!", client_config.name);
+    println!("");
+    println!("📁 Configuration file saved to: {}", config_path.display());
+    println!("");
+
+    // Show configuration content
+    if let Ok(config_content) = fs::read_to_string(&config_path) {
+        println!("📋 Client Configuration:");
+        println!("─────────────────────────");
+        println!("{}", config_content);
+        println!("─────────────────────────");
+        println!("");
+    }
+
+    // Generate and display QR code
+    if let Err(e) = generate_qr_code(&config_path) {
+        println!("Warning: Failed to generate QR code: {}", e);
+    }
+
+    // Wait for user acknowledgment before clearing
+    println!("");
+    wait_for_key_press_with_message("Press any key to continue and return to the main menu...");
+
+    // Clear terminal after user presses a key
+    clear_terminal();
 
     Ok(())
 }
@@ -982,6 +1021,9 @@ pub fn list_clients() -> Result<(), String> {
     }
     println!();
 
+    // Wait for user to view the list before clearing in the main menu
+    wait_for_key_press_with_message("Press any key to return to the main menu...");
+
     Ok(())
 }
 
@@ -1240,5 +1282,9 @@ pub fn revoke_client() -> Result<(), String> {
     }
 
     println!();
+
+    // Wait for user to see the result before clearing in the main menu
+    wait_for_key_press_with_message("Press any key to return to the main menu...");
+
     Ok(())
 }

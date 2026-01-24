@@ -1,7 +1,7 @@
 use crate::client::new_client;
 use crate::enums::OsType;
 use crate::models::InstallAnswers;
-use crate::utils::set_permissions_recursive;
+use crate::utils::{clear_terminal, set_permissions_recursive};
 use dialoguer::{Confirm, Input};
 use netwatcher;
 use std::fs;
@@ -743,6 +743,10 @@ Allowed IPs list for generated clients (leave default to route everything):
         .default("0.0.0.0/0".to_string())
         .interact_text()
         .unwrap();
+
+    // Clear terminal after installation questions are complete
+    clear_terminal();
+
     InstallAnswers {
         server_pub_ip: server_public_ip
             .parse::<Ipv4Addr>()

@@ -3,6 +3,7 @@ use crate::install::install_wireguard;
 use crate::client::{new_client, list_clients, revoke_client};
 use crate::uninstall::uninstall_wireguard;
 use crate::os_detection::get_os;
+use crate::utils::clear_terminal;
 use dialoguer::Select;
 use std::io;
 use std::path::Path;
@@ -51,22 +52,27 @@ fn show_management_menu() -> Result<(), String> {
         
         match selection {
             0 => {
-                // New Client
+                // New Client - DO NOT clear immediately
                 if let Err(e) = new_client() {
                     println!("Error creating client: {}", e);
                 }
+                // Clear after new_client completes (it handles its own clearing)
             },
             1 => {
                 // List Clients
                 if let Err(e) = list_clients() {
                     println!("Error listing clients: {}", e);
                 }
+                // Clear terminal after showing client list
+                clear_terminal();
             },
             2 => {
                 // Revoke Client
                 if let Err(e) = revoke_client() {
                     println!("Error revoking client: {}", e);
                 }
+                // Clear terminal after revoking client
+                clear_terminal();
             },
             3 => {
                 // Uninstall Wireguard
