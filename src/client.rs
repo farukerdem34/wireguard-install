@@ -34,6 +34,7 @@ pub struct ClientConfig {
     pub ipv6: Option<String>,
     pub home_dir: PathBuf,
     pub use_dns: bool,
+    pub allowed_ips: String,
 }
 
 /// Validate IPv4 address is in server subnet and not in use
@@ -339,6 +340,80 @@ fn prompt_for_dns_usage() -> Result<bool, String> {
     Ok(use_dns)
 }
 
+/// Prompt user for allowed IP addresses with validation
+fn prompt_for_allowed_ips() -> Result<String, String> {
+    println!("");
+    println!("Allowed IP Configuration");
+    println!("");
+    println!("Specify which traffic should be routed through the VPN.");
+    println!("Examples:");
+    println!("  • 0.0.0.0/0 - Route all traffic through VPN (full tunnel)");
+    println!("  • 10.0.0.0/8 - Route only private network traffic");
+    println!("  • 192.168.1.0/24 - Route only specific subnet traffic");
+    println!("  • Multiple ranges: 10.0.0.0/8,192.168.0.0/16");
+
+    let choice = Select::new()
+        .with_prompt("Choose allowed IP configuration")
+        .items(&[
+            "Route all traffic (0.0.0.0/0) - Recommended for full VPN",
+            "Enter custom allowed IPs",
+        ])
+        .default(0)
+        .interact()
+        .map_err(|e| format!("Selection error: {}", e))?;
+
+    match choice {
+        0 => {
+            // Use default all traffic routing
+            println!("✓ Using allowed IPs: 0.0.0.0/0");
+            Ok("0.0.0.0/0".to_string())
+        }
+        1 => {
+            // Custom allowed IPs input
+            loop {
+                let custom_ips: String = Input::new()
+                    .with_prompt("Enter allowed IPs (comma-separated)")
+                    .with_initial_text("0.0.0.0/0")
+                    .interact()
+                    .map_err(|e| format!("Input error: {}", e))?;
+
+                let custom_ips = custom_ips.trim();
+
+                if custom_ips.is_empty() {
+                    println!("");
+                    println!("❌ Allowed IPs cannot be empty");
+                    println!("Please try again.");
+                    println!("");
+                    continue;
+                }
+
+                // Basic validation: check for valid CIDR-like format
+                let is_valid = custom_ips.split(',').all(|ip| {
+                    let ip = ip.trim();
+                    // Simple regex check for CIDR format (x.x.x.x/y or x.x.x.x)
+                    ip.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '/' || c == ':')
+                        && (ip.contains('.') || ip.contains(':')) // IPv4 or IPv6
+                        && !ip.starts_with('/') && !ip.ends_with('/')
+                });
+
+                if !is_valid {
+                    println!("");
+                    println!(
+                        "❌ Invalid IP format. Please use CIDR notation (e.g., 192.168.1.0/24)"
+                    );
+                    println!("Please try again.");
+                    println!("");
+                    continue;
+                }
+
+                println!("✓ Using allowed IPs: {}", custom_ips);
+                return Ok(custom_ips.to_string());
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
 /// Main entry point for creating a new WireGuard client
 /// This function loads server parameters and guides through interactive client creation
 pub fn new_client() -> Result<(), String> {
@@ -366,13 +441,16 @@ pub fn new_client() -> Result<(), String> {
     // Step 4: DNS configuration choice
     let use_dns = prompt_for_dns_usage()?;
 
-    // Step 5: Generate client keys
+    // Step 5: Allowed IPs configuration
+    let allowed_ips = prompt_for_allowed_ips()?;
+
+    // Step 6: Generate client keys
     let (client_private_key, client_public_key, client_preshared_key) = generate_client_keys()?;
 
-    // Step 6: Get home directory for client
+    // Step 7: Get home directory for client
     let home_dir = get_home_dir_for_client(&client_name)?;
 
-    // Step 7: Create client configuration
+    // Step 8: Create client configuration
     let client_config = ClientConfig {
         name: client_name.clone(),
         private_key: client_private_key,
@@ -382,18 +460,19 @@ pub fn new_client() -> Result<(), String> {
         ipv6: client_ipv6,
         home_dir,
         use_dns,
+        allowed_ips,
     };
 
-    // Step 8: Create configuration file
+    // Step 9: Create configuration file
     create_client_config_file(&client_config, &params)?;
 
-    // Step 9: Add client to server configuration
+    // Step 10: Add client to server configuration
     add_client_to_server_config(&client_config, &params)?;
 
-    // Step 10: Sync WireGuard configuration
+    // Step 11: Sync WireGuard configuration
     sync_wireguard_config(&params.server_wg_nic)?;
 
-    // Step 11: Generate QR code
+    // Step 12: Generate QR code
     let config_path = client_config.home_dir.join(format!(
         "{}-client-{}.conf",
         params.server_wg_nic, client_config.name
@@ -736,7 +815,7 @@ fn create_client_config_file(
         params.server_pub_key,
         client.preshared_key,
         endpoint,
-        params.allowed_ips
+        client.allowed_ips
     );
 
     let config_path = client.home_dir.join(format!(
