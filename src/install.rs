@@ -649,6 +649,8 @@ pub fn install_wireguard(os: OsType) {
         let status = process::Command::new("sh")
             .arg("-c")
             .arg(cmd)
+            .stdout(process::Stdio::null()) // Suppress stdout
+            .stderr(process::Stdio::inherit()) // Retain stderr to show errors
             .status()
             .expect("Failed to execute package installation command");
 
