@@ -646,14 +646,12 @@ pub fn install_wireguard(os: OsType) {
 
 pub fn install_question() -> InstallAnswers {
     println!(
-        r#"
-    Welcome to the WireGuard installer!
-    The git repository is available at: https://github.com/farukerdem34/wireguard-install
+        r#"Welcome to the WireGuard installer!
+The git repository is available at: https://github.com/farukerdem34/wireguard-install
 
-    I need to ask you a few questions before starting the setup.
-    You can keep the default options and just press enter if you are ok with them.
-
-    "#
+I need to ask you a few questions before starting the setup.
+You can keep the default options and just press enter if you are ok with them.
+"#
     );
     let predicted_server_public_ip = detect_public_ip().unwrap_or_else(|err| {
         println!(
@@ -737,8 +735,7 @@ pub fn install_question() -> InstallAnswers {
         .unwrap();
     let allowed_ips: String = Input::new()
         .with_prompt(
-            r#"
-WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
+            r#"WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
 Allowed IPs list for generated clients (leave default to route everything):
         "#,
         )
