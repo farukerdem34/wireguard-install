@@ -2,7 +2,7 @@ use crate::client::new_client;
 use crate::enums::OsType;
 use crate::models::InstallAnswers;
 use crate::utils::set_permissions_recursive;
-use dialoguer::Input;
+use dialoguer::{Confirm, Input};
 use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
@@ -672,10 +672,10 @@ pub fn install_question() -> InstallAnswers {
         .default(predicted_server_public_ip)
         .interact_text()
         .unwrap();
-    let want_ipv6: bool = Input::new()
+    let want_ipv6: bool = Confirm::new()
         .with_prompt("Do you want to set IPv6?")
         .default(false)
-        .interact_text()
+        .interact()
         .unwrap();
     let mut server_public_ipv6: Option<String> = None;
     if want_ipv6 {
