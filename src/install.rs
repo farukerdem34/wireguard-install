@@ -3,12 +3,112 @@ use crate::models::InstallAnswers;
 use crate::utils::set_permissions_recursive;
 use dialoguer::Input;
 use std::fs;
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process;
 
+/// Generate a WireGuard private key using the `wg genkey` command
+fn generate_wg_private_key() -> Result<String, String> {
+    let output = process::Command::new("wg")
+        .arg("genkey")
+        .output()
+        .map_err(|e| format!("Failed to execute wg genkey: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "wg genkey failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let private_key = String::from_utf8(output.stdout)
+        .map_err(|e| format!("Failed to parse private key: {}", e))?
+        .trim()
+        .to_string();
+
+    Ok(private_key)
+}
+
+/// Generate a WireGuard public key from a private key using the `wg pubkey` command
+fn generate_wg_public_key(private_key: &str) -> Result<String, String> {
+    let mut child = process::Command::new("wg")
+        .arg("pubkey")
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to execute wg pubkey: {}", e))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(private_key.as_bytes())
+            .map_err(|e| format!("Failed to write to wg pubkey stdin: {}", e))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for wg pubkey: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "wg pubkey failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let public_key = String::from_utf8(output.stdout)
+        .map_err(|e| format!("Failed to parse public key: {}", e))?
+        .trim()
+        .to_string();
+
+    Ok(public_key)
+}
+
+/// Create WireGuard private and public key pair using std::process::Command
+/// Returns a tuple of (private_key, public_key)
+pub fn create_pub_priv_keys() -> Result<(String, String), String> {
+    // Generate private key using wg genkey command
+    let private_key =
+        generate_wg_private_key().map_err(|e| format!("Failed to generate private key: {}", e))?;
+
+    // Generate public key from private key using wg pubkey command
+    let public_key = generate_wg_public_key(&private_key)
+        .map_err(|e| format!("Failed to generate public key: {}", e))?;
+
+    Ok((private_key, public_key))
+}
+
+/// Write InstallAnswers to /etc/wireguard/params file in the specified format
+fn write_params_file(answers: &InstallAnswers) -> Result<(), String> {
+    let params_content = format!(
+        "SERVER_PUB_IP={}\nSERVER_PUB_NIC={}\nSERVER_WG_NIC={}\nSERVER_WG_IPV4={}\nSERVER_WG_IPV6={}\nSERVER_PORT={}\nSERVER_PRIV_KEY={}\nSERVER_PUB_KEY={}\nCLIENT_DNS_1={}\nCLIENT_DNS_2={}\nALLOWED_IPS={}",
+        answers.server_pub_ip,
+        answers.server_public_nic,
+        answers.server_wg_nic,
+        answers.server_wg_ip,
+        answers.server_pub_ipv6.as_ref().unwrap_or(&"".to_string()),
+        answers.server_wg_port,
+        answers.server_priv_key,
+        answers.server_pub_key,
+        answers.client_dns_1,
+        answers.client_dns_2,
+        answers.allowed_ips
+    );
+
+    fs::write("/etc/wireguard/params", params_content)
+        .map_err(|e| format!("Failed to write params file: {}", e))?;
+
+    // Set secure permissions (600) on the params file since it contains private keys
+    let params_path = Path::new("/etc/wireguard/params");
+    set_permissions_recursive(params_path)
+        .map_err(|e| format!("Failed to set permissions on params file: {}", e))?;
+
+    Ok(())
+}
+
 pub fn install_wireguard(os: OsType) {
-    let _answers: InstallAnswers = install_question();
+    let mut answers: InstallAnswers = install_question();
     let cmds = match os {
         OsType::Debian | OsType::Ubuntu | OsType::Rasbian => vec![
             "apt-get update",
@@ -72,6 +172,21 @@ pub fn install_wireguard(os: OsType) {
     let _ = fs::create_dir("/etc/wireguard");
     set_permissions_recursive(Path::new("/etc/wireguard"))
         .expect("Failed to set permissions on /etc/wireguard");
+
+    // Generate WireGuard server keys
+    println!("Generating WireGuard server keys...");
+    let (server_private_key, server_public_key) =
+        create_pub_priv_keys().expect("Failed to generate WireGuard key pair");
+
+    // Update answers with generated keys
+    answers.server_priv_key = server_private_key;
+    answers.server_pub_key = server_public_key;
+
+    // Write configuration to params file
+    println!("Writing WireGuard configuration to /etc/wireguard/params...");
+    write_params_file(&answers).expect("Failed to write WireGuard parameters file");
+
+    println!("WireGuard installation and configuration completed successfully!");
 }
 
 pub fn install_question() -> InstallAnswers {
@@ -174,6 +289,8 @@ pub fn install_question() -> InstallAnswers {
             .expect("Failed to parse wg0 IP"),
         server_wg_nic: server_wg_interface,
         server_wg_port: server_port.parse::<u16>().expect("Failed to parse port"),
+        server_priv_key: String::new(), // Will be filled later
+        server_pub_key: String::new(),  // Will be filled later
         client_dns_1: client_dns_1
             .parse::<Ipv4Addr>()
             .expect("Failed to parse DNS 1"),
