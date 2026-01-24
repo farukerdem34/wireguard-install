@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod enums;
 mod models;
 mod utils;
