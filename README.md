@@ -1,5 +1,7 @@
 # WireGuard VPN Server Installer
 
+Original project: [angristan/wireguard-install](https://github.com/angristan/wireguard-install.git)
+
 A zero-configuration WireGuard VPN server installer and management tool that works across multiple Linux distributions. Set up a secure VPN server in minutes with automated installation, client management, and QR code generation.
 
 ## ✨ Key Features
