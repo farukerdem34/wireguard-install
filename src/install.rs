@@ -6,7 +6,7 @@ use dialoguer::{Confirm, Input, Select};
 use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Write, stdout};
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process;
@@ -22,6 +22,7 @@ enum IpAddressType {
 fn generate_wg_private_key() -> Result<String, String> {
     let output = process::Command::new("wg")
         .arg("genkey")
+        .stdout(process::Stdio::piped())
         .output()
         .map_err(|e| format!("Failed to execute wg genkey: {}", e))?;
 
@@ -221,6 +222,7 @@ fn find_default_route_interface() -> Result<String, String> {
     // Try route command first (more widely available)
     if let Ok(output) = process::Command::new("route")
         .args(["-n", "get", "default"])
+        .stdout(process::Stdio::piped())
         .output()
     {
         if output.status.success() {
@@ -238,7 +240,7 @@ fn find_default_route_interface() -> Result<String, String> {
     }
 
     // Try netstat as alternative
-    if let Ok(output) = process::Command::new("netstat").args(["-rn"]).output() {
+    if let Ok(output) = process::Command::new("netstat").args(["-rn"]).stdout(process::Stdio::piped()).output() {
         if output.status.success() {
             let netstat_output = String::from_utf8_lossy(&output.stdout);
             // Look for default route (0.0.0.0 or 0/0)
@@ -293,7 +295,7 @@ enum FirewallType {
 
 /// Detect which firewall system is running on the server
 fn detect_firewall_system() -> FirewallType {
-    let output = process::Command::new("pgrep").arg("firewalld").output();
+    let output = process::Command::new("pgrep").arg("firewalld").stdout(process::Stdio::piped()).output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -443,6 +445,7 @@ fn configure_alpine_service(server_wg_nic: &str) {
     // Apply sysctl configuration immediately
     let status = process::Command::new("sysctl")
         .args(["-p", "/etc/sysctl.d/wg.conf"])
+        .stdout(std::process::Stdio::piped())
         .status()
         .expect("Failed to apply sysctl configuration");
 
@@ -453,6 +456,7 @@ fn configure_alpine_service(server_wg_nic: &str) {
     // Add sysctl to boot services
     let status = process::Command::new("rc-update")
         .args(["add", "sysctl"])
+        .stdout(std::process::Stdio::piped())
         .status()
         .expect("Failed to add sysctl to boot services");
 
@@ -464,6 +468,7 @@ fn configure_alpine_service(server_wg_nic: &str) {
     let symlink_target = format!("/etc/init.d/wg-quick.{}", server_wg_nic);
     let status = process::Command::new("ln")
         .args(["-s", "/etc/init.d/wg-quick", &symlink_target])
+        .stdout(std::process::Stdio::piped())
         .status()
         .expect("Failed to create service symlink");
 
@@ -475,6 +480,7 @@ fn configure_alpine_service(server_wg_nic: &str) {
     let service_name = format!("wg-quick.{}", server_wg_nic);
     let status = process::Command::new("rc-service")
         .args([&service_name, "start"])
+        .stdout(std::process::Stdio::piped())
         .status()
         .expect("Failed to start WireGuard service");
 
@@ -485,6 +491,7 @@ fn configure_alpine_service(server_wg_nic: &str) {
     // Enable service at boot
     let status = process::Command::new("rc-update")
         .args(["add", &service_name])
+        .stdout(std::process::Stdio::piped())
         .status()
         .expect("Failed to enable WireGuard service at boot");
 
@@ -502,6 +509,7 @@ fn configure_systemd_service(server_wg_nic: &str) {
     // Reload all sysctl configurations
     let status = process::Command::new("sysctl")
         .arg("--system")
+        .stdout(std::process::Stdio::piped())
         .status()
         .expect("Failed to reload sysctl configuration");
 
@@ -513,6 +521,7 @@ fn configure_systemd_service(server_wg_nic: &str) {
     let service_name = format!("wg-quick@{}", server_wg_nic);
     let status = process::Command::new("systemctl")
         .args(["start", &service_name])
+        .stdout(std::process::Stdio::null())
         .status()
         .expect("Failed to start WireGuard service");
 
@@ -525,6 +534,7 @@ fn configure_systemd_service(server_wg_nic: &str) {
     // Enable service at boot
     let status = process::Command::new("systemctl")
         .args(["enable", &service_name])
+        .stdout(std::process::Stdio::null())
         .status()
         .expect("Failed to enable WireGuard service at boot");
 
@@ -649,7 +659,7 @@ pub fn install_wireguard(os: OsType) {
         let status = process::Command::new("sh")
             .arg("-c")
             .arg(cmd)
-            .stdout(process::Stdio::null()) // Suppress stdout
+            .stdout(process::Stdio::piped()) // Suppress stdout
             .stderr(process::Stdio::inherit()) // Retain stderr to show errors
             .status()
             .expect("Failed to execute package installation command");
@@ -666,6 +676,7 @@ pub fn install_wireguard(os: OsType) {
     println!("Verifying WireGuard installation...");
     let wg_check = process::Command::new("sh")
         .args(["-c", "command -v wg"])
+        .stdout(process::Stdio::piped())
         .output()
         .expect("Failed to check for wg command");
 
@@ -680,7 +691,7 @@ pub fn install_wireguard(os: OsType) {
     }
 
     // Additional verification: try to run wg with --version to ensure it's working
-    let wg_version_check = process::Command::new("wg").arg("--version").output();
+    let wg_version_check = process::Command::new("wg").arg("--version").stdout(process::Stdio::piped()).output();
 
     match wg_version_check {
         Ok(output) if output.status.success() => {
