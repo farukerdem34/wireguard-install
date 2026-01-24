@@ -1,4 +1,4 @@
-use dialoguer::Input;
+use dialoguer::{Confirm, Input, Select};
 use qrcode::render::unicode;
 use qrcode::QrCode;
 use regex::Regex;
@@ -487,5 +487,328 @@ fn generate_qr_code(config_path: &PathBuf) -> Result<(), String> {
     println!("{}", image);
     println!("");
 
+    Ok(())
+}
+
+/// Lists all existing WireGuard clients with enhanced formatting
+/// Equivalent to the bash listClients() function
+///
+/// This function:
+/// 1. Loads WireGuard parameters from /etc/wireguard/params
+/// 2. Reads the server configuration file to find client entries
+/// 3. Displays a numbered list of all clients with enhanced formatting
+/// 4. Exits with code 1 if no clients are found (matching bash behavior)
+pub fn list_clients() -> Result<(), String> {
+    // Step 1: Load WireGuard parameters to get SERVER_WG_NIC
+    let params = load_wireguard_params()
+        .map_err(|e| format!("Failed to load WireGuard configuration: {}", e))?;
+
+    // Step 2: Read server configuration file
+    let config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);
+    let config_content = fs::read_to_string(&config_path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("WireGuard configuration file not found at {}\nPlease ensure WireGuard server is properly configured.", config_path)
+            },
+            std::io::ErrorKind::PermissionDenied => {
+                format!("Permission denied reading {}\nPlease run this program with appropriate privileges (sudo).", config_path)
+            },
+            _ => format!("Failed to read {}: {}", config_path, e),
+        })?;
+
+    // Step 3: Find all client entries using regex
+    let client_regex = Regex::new(r"^### Client (.+)$")
+        .map_err(|e| format!("Failed to compile regex pattern: {}", e))?;
+
+    let clients: Vec<String> = config_content
+        .lines()
+        .filter_map(|line| {
+            client_regex
+                .captures(line)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().trim().to_string())
+        })
+        .collect();
+
+    // Step 4: Handle no clients case (exit like bash version)
+    if clients.is_empty() {
+        println!();
+        println!("You have no existing clients!");
+        std::process::exit(1);
+    }
+
+    // Step 5: Display enhanced client list
+    println!();
+    println!("📋 WireGuard Client List");
+    println!();
+    println!(
+        "Found {} client{}:",
+        clients.len(),
+        if clients.len() == 1 { "" } else { "s" }
+    );
+
+    for (index, client_name) in clients.iter().enumerate() {
+        println!("  {}) {}", index + 1, client_name);
+    }
+    println!();
+
+    Ok(())
+}
+
+/// Get list of existing WireGuard clients from server configuration
+/// This function extracts client names from the server config file
+fn get_existing_clients(params: &WireguardParams) -> Result<Vec<String>, String> {
+    let config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);
+    let config_content = fs::read_to_string(&config_path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("WireGuard configuration file not found at {}\nPlease ensure WireGuard server is properly configured.", config_path)
+            },
+            std::io::ErrorKind::PermissionDenied => {
+                format!("Permission denied reading {}\nPlease run this program with appropriate privileges (sudo).", config_path)
+            },
+            _ => format!("Failed to read {}: {}", config_path, e),
+        })?;
+
+    // Extract client names using regex
+    let client_regex = Regex::new(r"^### Client (.+)$")
+        .map_err(|e| format!("Failed to compile regex pattern: {}", e))?;
+
+    let clients: Vec<String> = config_content
+        .lines()
+        .filter_map(|line| {
+            client_regex
+                .captures(line)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().trim().to_string())
+        })
+        .collect();
+
+    Ok(clients)
+}
+
+/// Interactive client selection using arrow keys
+/// Returns the selected client name
+fn interactive_client_selection(clients: &[String]) -> Result<String, String> {
+    println!();
+    println!("Select the client you want to revoke:");
+
+    let selection = Select::new()
+        .items(clients)
+        .with_prompt("Choose client to revoke")
+        .default(0)
+        .interact()
+        .map_err(|e| format!("Selection error: {}", e))?;
+
+    Ok(clients[selection].clone())
+}
+
+/// Confirm revocation with safety warning
+/// Returns true if user confirms, false if cancelled
+fn confirm_revocation(client_name: &str) -> Result<bool, String> {
+    println!();
+    println!("⚠️  WARNING: This action cannot be undone!");
+    println!(
+        "   Client '{}' will lose VPN access immediately.",
+        client_name
+    );
+
+    let confirmed = Confirm::new()
+        .with_prompt(&format!(
+            "Are you sure you want to revoke '{}'?",
+            client_name
+        ))
+        .default(false)
+        .interact()
+        .map_err(|e| format!("Confirmation error: {}", e))?;
+
+    Ok(confirmed)
+}
+
+/// Remove client configuration from server config file
+/// Uses smart parsing instead of sed for safer removal
+fn remove_client_from_config(config_path: &str, client_name: &str) -> Result<(), String> {
+    // Read current config
+    let content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read server config: {}", e))?;
+
+    // Parse and filter out client section
+    let mut new_content = String::new();
+    let mut lines = content.lines().peekable();
+    let mut skip_block = false;
+
+    while let Some(line) = lines.next() {
+        // Check for client block start
+        if line == format!("### Client {}", client_name) {
+            skip_block = true;
+            continue;
+        }
+
+        // Skip until empty line (end of peer block)
+        if skip_block {
+            if line.trim().is_empty() {
+                skip_block = false;
+                // Don't add the empty line that ends the block
+                continue;
+            }
+            continue;
+        }
+
+        // Keep non-client lines
+        new_content.push_str(line);
+        new_content.push('\n');
+    }
+
+    // Write back the modified content
+    fs::write(config_path, new_content.trim_end())
+        .map_err(|e| format!("Failed to write updated server config: {}", e))?;
+
+    Ok(())
+}
+
+/// Remove client configuration files from filesystem
+/// Uses existing get_home_dir_for_client function for consistency
+fn remove_client_files(client_name: &str, server_wg_nic: &str) -> Result<(), String> {
+    // Get home directory (reuse existing function)
+    let home_dir = get_home_dir_for_client(client_name)?;
+
+    // Build client config file path
+    let client_config_path =
+        home_dir.join(format!("{}-client-{}.conf", server_wg_nic, client_name));
+
+    // Remove client config file if it exists
+    if client_config_path.exists() {
+        fs::remove_file(&client_config_path).map_err(|e| {
+            format!(
+                "Failed to remove client config {}: {}",
+                client_config_path.display(),
+                e
+            )
+        })?;
+
+        println!(
+            "   ✓ Removed client configuration file: {}",
+            client_config_path.display()
+        );
+    } else {
+        println!("   ℹ️  Client configuration file not found (may have been removed already)");
+    }
+
+    Ok(())
+}
+
+/// Revoke an existing WireGuard client with interactive selection
+/// Equivalent to the bash revokeClient() function with enhanced UX
+///
+/// This function:
+/// 1. Loads WireGuard parameters and checks for existing clients
+/// 2. Presents an interactive arrow-key selection interface
+/// 3. Confirms revocation with safety warning
+/// 4. Removes client from server configuration (best effort)
+/// 5. Removes client configuration files (best effort)
+/// 6. Syncs WireGuard service to apply changes
+/// 7. Provides detailed success/failure feedback
+pub fn revoke_client() -> Result<(), String> {
+    // Step 1: Load WireGuard configuration
+    let params = load_wireguard_params()
+        .map_err(|e| format!("Failed to load WireGuard configuration: {}", e))?;
+
+    // Step 2: Get existing clients
+    let clients = get_existing_clients(&params)
+        .map_err(|e| format!("Failed to retrieve client list: {}", e))?;
+
+    // Step 3: Check if any clients exist
+    if clients.is_empty() {
+        println!();
+        println!("You have no existing clients!");
+        std::process::exit(1);
+    }
+
+    // Step 4: Display header
+    println!();
+    println!("🗑️  Revoke WireGuard Client");
+    println!();
+    println!(
+        "Found {} client{}:",
+        clients.len(),
+        if clients.len() == 1 { "" } else { "s" }
+    );
+
+    for (index, client_name) in clients.iter().enumerate() {
+        println!("  {}) {}", index + 1, client_name);
+    }
+
+    // Step 5: Interactive client selection
+    let client_name = interactive_client_selection(&clients)?;
+
+    // Step 6: Confirm revocation
+    if !confirm_revocation(&client_name)? {
+        println!();
+        println!("Revocation cancelled.");
+        return Ok(());
+    }
+
+    // Step 7: Best effort cleanup - collect errors but continue
+    let mut errors = Vec::new();
+    let mut successes = Vec::new();
+
+    // Remove from server config
+    let server_config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);
+    match remove_client_from_config(&server_config_path, &client_name) {
+        Ok(()) => {
+            successes.push("Removed from server configuration".to_string());
+        }
+        Err(e) => {
+            errors.push(format!("Failed to remove from server config: {}", e));
+        }
+    }
+
+    // Remove client files
+    match remove_client_files(&client_name, &params.server_wg_nic) {
+        Ok(()) => {
+            successes.push("Client configuration file deleted".to_string());
+        }
+        Err(e) => {
+            errors.push(format!("Failed to remove client files: {}", e));
+        }
+    }
+
+    // Sync WireGuard service
+    match sync_wireguard_config(&params.server_wg_nic) {
+        Ok(()) => {
+            successes.push("WireGuard service updated".to_string());
+        }
+        Err(e) => {
+            errors.push(format!("Failed to sync WireGuard service: {}", e));
+        }
+    }
+
+    // Report results
+    println!();
+    if errors.is_empty() {
+        println!("✅ Client '{}' has been successfully revoked!", client_name);
+        for success in successes {
+            println!("   • {}", success);
+        }
+    } else if successes.is_empty() {
+        println!("❌ Failed to revoke client '{}':", client_name);
+        for error in errors {
+            println!("   • {}", error);
+        }
+        return Err("Revocation failed completely".to_string());
+    } else {
+        println!("⚠️  Client '{}' partially revoked:", client_name);
+        for success in successes {
+            println!("   ✓ {}", success);
+        }
+        for error in &errors {
+            println!("   ✗ {}", error);
+        }
+        println!();
+        println!("Some operations failed, but the client may still lose access.");
+        println!("Please check the errors above and resolve them manually if needed.");
+    }
+
+    println!();
     Ok(())
 }

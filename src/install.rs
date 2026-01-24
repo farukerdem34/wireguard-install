@@ -485,7 +485,7 @@ pub fn install_wireguard(os: OsType) {
     configure_wireguard_service(os, &answers.server_wg_nic);
     new_client();
     println!("WireGuard installation and configuration completed successfully!");
-    println!("If you want to add more clients, you simply need to run this script another time!")
+    println!("If you want to add more clients, you simply need to run this script another time!");
     std::process::exit(0);
 }
 
