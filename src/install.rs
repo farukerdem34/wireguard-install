@@ -194,6 +194,179 @@ PrivateKey = {}
     println!("WireGuard configuration file created successfully!");
 }
 
+/// Enable IP forwarding by creating sysctl configuration
+fn enable_ip_routing() {
+    println!("Enabling IP routing...");
+    let sysctl_content = "net.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n";
+
+    fs::write("/etc/sysctl.d/wg.conf", sysctl_content)
+        .expect("Failed to write sysctl configuration to /etc/sysctl.d/wg.conf");
+
+    println!("IP forwarding enabled in /etc/sysctl.d/wg.conf");
+}
+
+/// Set Fedora-specific restrictive permissions on WireGuard directory and files
+fn set_fedora_permissions() {
+    println!("Setting Fedora-specific permissions on /etc/wireguard...");
+
+    // Set directory permissions to 700
+    let status = process::Command::new("chmod")
+        .args(["-v", "700", "/etc/wireguard"])
+        .status()
+        .expect("Failed to set directory permissions on /etc/wireguard");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to set directory permissions");
+    }
+
+    // Set file permissions to 600 for all files in the directory
+    let status = process::Command::new("sh")
+        .args(["-c", "chmod -v 600 /etc/wireguard/*"])
+        .status()
+        .expect("Failed to set file permissions on /etc/wireguard files");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to set file permissions");
+    }
+
+    println!("Fedora-specific permissions applied to /etc/wireguard");
+}
+
+/// Configure WireGuard service for Alpine Linux (OpenRC)
+fn configure_alpine_service(server_wg_nic: &str) {
+    println!("Configuring WireGuard service for Alpine Linux...");
+
+    // Apply sysctl configuration immediately
+    let status = process::Command::new("sysctl")
+        .args(["-p", "/etc/sysctl.d/wg.conf"])
+        .status()
+        .expect("Failed to apply sysctl configuration");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to apply sysctl configuration");
+    }
+
+    // Add sysctl to boot services
+    let status = process::Command::new("rc-update")
+        .args(["add", "sysctl"])
+        .status()
+        .expect("Failed to add sysctl to boot services");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to add sysctl to boot services");
+    }
+
+    // Create service symlink
+    let symlink_target = format!("/etc/init.d/wg-quick.{}", server_wg_nic);
+    let status = process::Command::new("ln")
+        .args(["-s", "/etc/init.d/wg-quick", &symlink_target])
+        .status()
+        .expect("Failed to create service symlink");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to create service symlink");
+    }
+
+    // Start the WireGuard service
+    let service_name = format!("wg-quick.{}", server_wg_nic);
+    let status = process::Command::new("rc-service")
+        .args([&service_name, "start"])
+        .status()
+        .expect("Failed to start WireGuard service");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to start WireGuard service");
+    }
+
+    // Enable service at boot
+    let status = process::Command::new("rc-update")
+        .args(["add", &service_name])
+        .status()
+        .expect("Failed to enable WireGuard service at boot");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to enable WireGuard service at boot");
+    }
+
+    println!("WireGuard service configured and started for Alpine Linux");
+}
+
+/// Configure WireGuard service for systemd-based distributions
+fn configure_systemd_service(server_wg_nic: &str) {
+    println!("Configuring WireGuard service with systemd...");
+
+    // Reload all sysctl configurations
+    let status = process::Command::new("sysctl")
+        .arg("--system")
+        .status()
+        .expect("Failed to reload sysctl configuration");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to reload sysctl configuration");
+    }
+
+    // Start the WireGuard service
+    let service_name = format!("wg-quick@{}", server_wg_nic);
+    let status = process::Command::new("systemctl")
+        .args(["start", &service_name])
+        .status()
+        .expect("Failed to start WireGuard service");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to start WireGuard service");
+    } else {
+        println!("WireGuard service '{}' started successfully", service_name);
+    }
+
+    // Enable service at boot
+    let status = process::Command::new("systemctl")
+        .args(["enable", &service_name])
+        .status()
+        .expect("Failed to enable WireGuard service at boot");
+
+    if !status.success() {
+        eprintln!("Warning: Failed to enable WireGuard service at boot");
+    } else {
+        println!("WireGuard service '{}' enabled at boot", service_name);
+    }
+
+    println!("WireGuard service configured with systemd");
+}
+
+/// Configure and start WireGuard service based on the operating system type
+fn configure_wireguard_service(os: OsType, server_wg_nic: &str) {
+    println!("Configuring WireGuard service for OS: {:?}", os);
+
+    match os {
+        OsType::Fedora => {
+            // Set restrictive permissions for Fedora
+            set_fedora_permissions();
+            // Use systemd for service management
+            configure_systemd_service(server_wg_nic);
+        }
+        OsType::Alpine => {
+            // Alpine uses OpenRC instead of systemd
+            configure_alpine_service(server_wg_nic);
+        }
+        // Most other distributions use systemd
+        OsType::Debian
+        | OsType::Ubuntu
+        | OsType::Rasbian
+        | OsType::Centos
+        | OsType::AlmaLinux
+        | OsType::Rocky
+        | OsType::Arch => {
+            configure_systemd_service(server_wg_nic);
+        }
+        OsType::Unknown => {
+            println!("Unknown OS type - attempting systemd service configuration");
+            configure_systemd_service(server_wg_nic);
+        }
+    }
+
+    println!("WireGuard service configuration completed");
+}
+
 /// Write InstallAnswers to /etc/wireguard/params file in the specified format
 fn write_params_file(answers: &InstallAnswers) -> Result<(), String> {
     let params_content = format!(
@@ -303,6 +476,12 @@ pub fn install_wireguard(os: OsType) {
 
     // Create the WireGuard server configuration file
     create_wireguard_config(&answers);
+
+    // Enable IP routing
+    enable_ip_routing();
+
+    // Configure and start WireGuard service based on OS
+    configure_wireguard_service(os, &answers.server_wg_nic);
 
     println!("WireGuard installation and configuration completed successfully!");
 }
