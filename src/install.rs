@@ -579,8 +579,8 @@ pub fn install_question() -> InstallAnswers {
     let allowed_ips: String = Input::new()
         .with_prompt(
             r#"
-        WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
-        Allowed IPs list for generated clients (leave default to route everything):
+WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
+Allowed IPs list for generated clients (leave default to route everything):
         "#,
         )
         .default("0.0.0.0/0".to_string())
