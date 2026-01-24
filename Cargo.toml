@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = { version = "0.4.38", features = ["serde"] }
 dialoguer = "0.12.0"
 dotenv = "0.15.0"
 heim-virt = "0.0.11"

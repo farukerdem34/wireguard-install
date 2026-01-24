@@ -1,10 +1,17 @@
 use crate::enums::OsType;
+use crate::models::VersionInfo;
 use dotenv;
 
 pub fn get_os() -> OsType {
+    let (os_type, _) = get_os_with_version();
+    os_type
+}
+
+pub fn get_os_with_version() -> (OsType, VersionInfo) {
     dotenv::from_path("/etc/os-release")
         .expect("Failed to load /etc/os-release environment variable");
-    let os = match std::env::var("NAME") {
+
+    let os_name = match std::env::var("NAME") {
         Ok(os) => os.to_lowercase(),
         Err(e) => {
             eprintln!("Something went wrong getting OS information. Please check supported OSes.");
@@ -14,14 +21,22 @@ pub fn get_os() -> OsType {
         }
     };
 
-    match os.as_str() {
-        "debian" | "rasbian" => OsType::Debian,
-        "ubuntu" => OsType::Ubuntu,
-        "fedora" => OsType::Fedora,
-        "centos" => OsType::Centos,
-        "almalinux" => OsType::AlmaLinux,
-        "rocky" => OsType::Rocky,
-        "arch" => OsType::Arch,
+    let version_id = std::env::var("VERSION_ID").unwrap_or_default();
+    let version_info = VersionInfo::new(&version_id);
+
+    let os_type = match os_name.as_str() {
+        name if name.contains("debian") => OsType::Debian,
+        name if name.contains("raspbian") => OsType::Raspbian,
+        name if name.contains("ubuntu") => OsType::Ubuntu,
+        name if name.contains("fedora") => OsType::Fedora,
+        name if name.contains("centos") => OsType::Centos,
+        name if name.contains("almalinux") => OsType::AlmaLinux,
+        name if name.contains("rocky") => OsType::Rocky,
+        name if name.contains("oracle") => OsType::Oracle,
+        name if name.contains("arch") => OsType::Arch,
+        name if name.contains("alpine") => OsType::Alpine,
         _ => OsType::Unknown,
-    }
+    };
+
+    (os_type, version_info)
 }

@@ -6,6 +6,7 @@ mod checks;
 mod os_detection;
 mod initialization;
 mod client;
+mod uninstall;
 
 use crate::initialization::initial_check;
 

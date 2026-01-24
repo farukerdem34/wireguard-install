@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum OsType {
     Ubuntu,
     Debian,
@@ -7,7 +7,8 @@ pub enum OsType {
     AlmaLinux,
     Rocky,
     Arch,
-    Rasbian,
+    Raspbian,
     Alpine,
+    Oracle,
     Unknown,
 }

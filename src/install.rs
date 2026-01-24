@@ -352,10 +352,11 @@ fn configure_wireguard_service(os: OsType, server_wg_nic: &str) {
         // Most other distributions use systemd
         OsType::Debian
         | OsType::Ubuntu
-        | OsType::Rasbian
+        | OsType::Raspbian
         | OsType::Centos
         | OsType::AlmaLinux
         | OsType::Rocky
+        | OsType::Oracle
         | OsType::Arch => {
             configure_systemd_service(server_wg_nic);
         }
@@ -399,7 +400,7 @@ fn write_params_file(answers: &InstallAnswers) -> Result<(), String> {
 pub fn install_wireguard(os: OsType) {
     let mut answers: InstallAnswers = install_question();
     let cmds = match os {
-        OsType::Debian | OsType::Ubuntu | OsType::Rasbian => vec![
+        OsType::Debian | OsType::Ubuntu | OsType::Raspbian => vec![
             "apt-get update",
             "apt-get install -y wireguard iptables resolvconf qrencode",
         ],
@@ -432,6 +433,7 @@ pub fn install_wireguard(os: OsType) {
                 vec!["yum install -y wireguard-tools iptables"]
             }
         }
+        OsType::Oracle => vec!["yum install -y wireguard-tools iptables qrencode"],
         OsType::Arch => vec!["pacman -S --needed --noconfirm wireguard-tools qrencode"],
         OsType::Alpine => vec!["apk add wireguard-tools iptables libqrencode-tools"],
         OsType::Unknown => {
@@ -483,7 +485,13 @@ pub fn install_wireguard(os: OsType) {
 
     // Configure and start WireGuard service based on OS
     configure_wireguard_service(os, &answers.server_wg_nic);
-    new_client();
+
+    // Create first client
+    if let Err(e) = new_client() {
+        eprintln!("Warning: Failed to create initial client: {}", e);
+        eprintln!("You can add clients later using the client management menu.");
+    }
+
     println!("WireGuard installation and configuration completed successfully!");
     println!("If you want to add more clients, you simply need to run this script another time!");
     std::process::exit(0);
