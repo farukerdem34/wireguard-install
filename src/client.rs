@@ -1098,7 +1098,8 @@ fn confirm_revocation(client_name: &str) -> Result<bool, String> {
 }
 
 /// Remove client configuration from server config file
-/// Uses smart parsing instead of sed for safer removal
+/// Uses robust parsing to safely remove only the specified client while preserving others
+/// Handles multiple WireGuard config formats (with or without empty line separators)
 fn remove_client_from_config(config_path: &str, client_name: &str) -> Result<(), String> {
     // Read current config
     let content = fs::read_to_string(config_path)
@@ -1110,23 +1111,31 @@ fn remove_client_from_config(config_path: &str, client_name: &str) -> Result<(),
     let mut skip_block = false;
 
     while let Some(line) = lines.next() {
-        // Check for client block start
+        // Check for target client block start
         if line == format!("### Client {}", client_name) {
             skip_block = true;
             continue;
         }
 
-        // Skip until empty line (end of peer block)
+        // If we're skipping, check for conditions to stop skipping
         if skip_block {
-            if line.trim().is_empty() {
+            // Stop skipping if we encounter:
+            // 1. Another client block
+            // 2. A WireGuard [Interface] section (not [Peer] which belongs to clients)
+            // 3. An empty line (traditional separator)
+            if line.starts_with("### Client ")
+                || line.starts_with("[Interface]")
+                || line.trim().is_empty()
+            {
                 skip_block = false;
-                // Don't add the empty line that ends the block
+                // Fall through to add this line to new_content
+            } else {
+                // Continue skipping lines that belong to the target client
                 continue;
             }
-            continue;
         }
 
-        // Keep non-client lines
+        // Keep non-target-client lines
         new_content.push_str(line);
         new_content.push('\n');
     }
@@ -1287,4 +1296,168 @@ pub fn revoke_client() -> Result<(), String> {
     wait_for_key_press_with_message("Press any key to return to the main menu...");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_remove_client_from_config_single_client() {
+        let config_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here
+
+### Client target-client
+[Peer]
+PublicKey = target_client_public_key
+PresharedKey = target_client_preshared_key
+AllowedIPs = 10.8.0.2/32
+"#;
+
+        let expected_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here"#;
+
+        // Create temporary file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        fs::write(temp_file.path(), config_content).unwrap();
+
+        // Remove client
+        remove_client_from_config(temp_file.path().to_str().unwrap(), "target-client").unwrap();
+
+        // Read result
+        let result_content = fs::read_to_string(temp_file.path()).unwrap();
+        assert_eq!(result_content.trim(), expected_content.trim());
+    }
+
+    #[test]
+    fn test_remove_client_from_config_multiple_clients_with_empty_lines() {
+        let config_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here
+
+### Client client1
+[Peer]
+PublicKey = client1_public_key
+PresharedKey = client1_preshared_key
+AllowedIPs = 10.8.0.2/32
+
+### Client target-client
+[Peer]
+PublicKey = target_client_public_key
+PresharedKey = target_client_preshared_key
+AllowedIPs = 10.8.0.3/32
+
+### Client client3
+[Peer]
+PublicKey = client3_public_key
+PresharedKey = client3_preshared_key
+AllowedIPs = 10.8.0.4/32
+"#;
+
+        let expected_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here
+
+### Client client1
+[Peer]
+PublicKey = client1_public_key
+PresharedKey = client1_preshared_key
+AllowedIPs = 10.8.0.2/32
+
+
+### Client client3
+[Peer]
+PublicKey = client3_public_key
+PresharedKey = client3_preshared_key
+AllowedIPs = 10.8.0.4/32"#;
+
+        // Create temporary file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        fs::write(temp_file.path(), config_content).unwrap();
+
+        // Remove target client
+        remove_client_from_config(temp_file.path().to_str().unwrap(), "target-client").unwrap();
+
+        // Read result
+        let result_content = fs::read_to_string(temp_file.path()).unwrap();
+        assert_eq!(result_content.trim(), expected_content.trim());
+    }
+
+    #[test]
+    fn test_remove_client_from_config_multiple_clients_no_empty_lines() {
+        let config_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here
+### Client client1
+[Peer]
+PublicKey = client1_public_key
+PresharedKey = client1_preshared_key
+AllowedIPs = 10.8.0.2/32
+### Client target-client
+[Peer]
+PublicKey = target_client_public_key
+PresharedKey = target_client_preshared_key
+AllowedIPs = 10.8.0.3/32
+### Client client3
+[Peer]
+PublicKey = client3_public_key
+PresharedKey = client3_preshared_key
+AllowedIPs = 10.8.0.4/32
+"#;
+
+        let expected_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here
+### Client client1
+[Peer]
+PublicKey = client1_public_key
+PresharedKey = client1_preshared_key
+AllowedIPs = 10.8.0.2/32
+### Client client3
+[Peer]
+PublicKey = client3_public_key
+PresharedKey = client3_preshared_key
+AllowedIPs = 10.8.0.4/32"#;
+
+        // Create temporary file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        fs::write(temp_file.path(), config_content).unwrap();
+
+        // Remove target client (this was the bug - would remove all subsequent clients)
+        remove_client_from_config(temp_file.path().to_str().unwrap(), "target-client").unwrap();
+
+        // Read result
+        let result_content = fs::read_to_string(temp_file.path()).unwrap();
+        assert_eq!(result_content.trim(), expected_content.trim());
+    }
+
+    #[test]
+    fn test_remove_client_from_config_client_not_found() {
+        let config_content = r#"[Interface]
+Address = 10.8.0.1/24
+PrivateKey = server_private_key_here
+
+### Client client1
+[Peer]
+PublicKey = client1_public_key
+PresharedKey = client1_preshared_key
+AllowedIPs = 10.8.0.2/32
+"#;
+
+        // Create temporary file
+        let mut temp_file = NamedTempFile::new().unwrap();
+        fs::write(temp_file.path(), config_content).unwrap();
+
+        // Try to remove non-existent client
+        remove_client_from_config(temp_file.path().to_str().unwrap(), "nonexistent-client")
+            .unwrap();
+
+        // Read result - should be unchanged
+        let result_content = fs::read_to_string(temp_file.path()).unwrap();
+        assert_eq!(result_content.trim(), config_content.trim());
+    }
 }
