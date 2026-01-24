@@ -1,7 +1,7 @@
 use crate::utils::{clear_terminal, wait_for_key_press_with_message};
 use dialoguer::{Confirm, Input, Select};
-use qrcode::render::unicode;
 use qrcode::QrCode;
+use qrcode::render::unicode;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
@@ -430,7 +430,9 @@ pub fn new_client() -> Result<(), String> {
     println!("");
     println!("Client configuration");
     println!("");
-    println!("The client name must consist of alphanumeric character(s). It may also include underscores or dashes and can't exceed 15 chars.");
+    println!(
+        "The client name must consist of alphanumeric character(s). It may also include underscores or dashes and can't exceed 15 chars."
+    );
 
     let client_name = prompt_and_validate_client_name(&params.server_wg_nic)?;
 
@@ -648,7 +650,9 @@ fn prompt_and_validate_client_name(server_wg_nic: &str) -> Result<String, String
         // Validate name format
         if !name_regex.is_match(&client_name) {
             println!("");
-            println!("Invalid characters in client name. Use only alphanumeric characters, underscores, or dashes.");
+            println!(
+                "Invalid characters in client name. Use only alphanumeric characters, underscores, or dashes."
+            );
             println!("");
             continue;
         }
@@ -667,7 +671,9 @@ fn prompt_and_validate_client_name(server_wg_nic: &str) -> Result<String, String
             let search_pattern = format!("### Client {}", client_name);
             if content.contains(&search_pattern) {
                 println!("");
-                println!("A client with the specified name was already created, please choose another name.");
+                println!(
+                    "A client with the specified name was already created, please choose another name."
+                );
                 println!("");
                 continue;
             }

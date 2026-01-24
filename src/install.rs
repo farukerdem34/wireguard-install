@@ -564,7 +564,9 @@ pub fn install_wireguard(os: OsType) {
 
         if !status.success() {
             eprintln!("Package installation failed for command: {}", cmd);
-            eprintln!("WireGuard installation incomplete. Please install WireGuard manually and try again.");
+            eprintln!(
+                "WireGuard installation incomplete. Please install WireGuard manually and try again."
+            );
             process::exit(1);
         }
     }

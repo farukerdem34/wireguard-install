@@ -1,6 +1,6 @@
 use std::fs;
 use std::io;
-use std::io::{stdin, stdout, Write};
+use std::io::{Write, stdin, stdout};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 

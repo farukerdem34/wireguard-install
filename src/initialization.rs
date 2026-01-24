@@ -1,8 +1,8 @@
 use crate::checks::{check_virtualization, is_root};
+use crate::client::{list_clients, new_client, revoke_client};
 use crate::install::install_wireguard;
-use crate::client::{new_client, list_clients, revoke_client};
-use crate::uninstall::uninstall_wireguard;
 use crate::os_detection::get_os;
+use crate::uninstall::uninstall_wireguard;
 use crate::utils::clear_terminal;
 use dialoguer::Select;
 use std::io;
@@ -13,7 +13,7 @@ pub async fn initial_check() -> io::Result<()> {
     let _ = is_root();
     let os = get_os();
     println!("Detected OS: {:?}", os);
-    
+
     // Check if WireGuard is already installed by looking for params file
     if Path::new("/etc/wireguard/params").exists() {
         // WireGuard is installed, show management menu
@@ -25,7 +25,7 @@ pub async fn initial_check() -> io::Result<()> {
         println!("WireGuard not detected. Starting installation...");
         install_wireguard(os);
     }
-    
+
     Ok(())
 }
 
@@ -34,7 +34,7 @@ fn show_management_menu() -> Result<(), String> {
         println!();
         println!("=== WireGuard Management ===");
         println!();
-        
+
         let options = vec![
             "New Client",
             "List Clients",
@@ -42,14 +42,14 @@ fn show_management_menu() -> Result<(), String> {
             "Uninstall Wireguard",
             "Exit",
         ];
-        
+
         let selection = Select::new()
             .with_prompt("What would you like to do?")
             .items(&options)
             .default(0)
             .interact()
             .map_err(|e| format!("Menu selection error: {}", e))?;
-        
+
         match selection {
             0 => {
                 // New Client - DO NOT clear immediately
@@ -57,7 +57,7 @@ fn show_management_menu() -> Result<(), String> {
                     println!("Error creating client: {}", e);
                 }
                 // Clear after new_client completes (it handles its own clearing)
-            },
+            }
             1 => {
                 // List Clients
                 if let Err(e) = list_clients() {
@@ -65,7 +65,7 @@ fn show_management_menu() -> Result<(), String> {
                 }
                 // Clear terminal after showing client list
                 clear_terminal();
-            },
+            }
             2 => {
                 // Revoke Client
                 if let Err(e) = revoke_client() {
@@ -73,7 +73,7 @@ fn show_management_menu() -> Result<(), String> {
                 }
                 // Clear terminal after revoking client
                 clear_terminal();
-            },
+            }
             3 => {
                 // Uninstall Wireguard
                 if let Err(e) = uninstall_wireguard() {
@@ -82,18 +82,17 @@ fn show_management_menu() -> Result<(), String> {
                 }
                 // Uninstall completes successfully, exit the program
                 break;
-            },
+            }
             4 => {
                 // Exit
                 println!("👋 Goodbye!");
                 break;
-            },
+            }
             _ => {
                 println!("Invalid selection");
             }
         }
     }
-    
+
     Ok(())
 }
-

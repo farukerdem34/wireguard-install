@@ -1,4 +1,4 @@
-use crate::client::{load_wireguard_params, WireguardParams};
+use crate::client::{WireguardParams, load_wireguard_params};
 use crate::enums::OsType;
 use crate::models::VersionInfo;
 use crate::os_detection::get_os_with_version;
@@ -78,8 +78,12 @@ fn discover_wireguard_installation() -> Result<WireguardParams, String> {
 /// Display warning and get user confirmation for uninstall
 fn confirm_uninstall() -> Result<bool, String> {
     println!();
-    println!("\x1b[31m⚠️  WARNING: This will uninstall WireGuard and remove all configuration files!\x1b[0m");
-    println!("\x1b[33m📁 Please backup the /etc/wireguard directory if you want to keep your configuration files.\x1b[0m");
+    println!(
+        "\x1b[31m⚠️  WARNING: This will uninstall WireGuard and remove all configuration files!\x1b[0m"
+    );
+    println!(
+        "\x1b[33m📁 Please backup the /etc/wireguard directory if you want to keep your configuration files.\x1b[0m"
+    );
     println!();
 
     Confirm::new()
