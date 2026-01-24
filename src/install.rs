@@ -827,7 +827,7 @@ You can keep the default options and just press enter if you are ok with them.
         .with_prompt(
             r#"WireGuard uses a parameter called AllowedIPs to determine what is routed over the VPN.
 Allowed IPs list for generated clients (leave default to route everything):
-        "#,
+"#,
         )
         .default("0.0.0.0/0".to_string())
         .interact_text()
