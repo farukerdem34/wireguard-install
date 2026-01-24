@@ -3,6 +3,7 @@ use crate::models::InstallAnswers;
 use crate::utils::set_permissions_recursive;
 use dialoguer::Input;
 use std::fs;
+use std::fs::OpenOptions;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::Path;
@@ -77,6 +78,120 @@ pub fn create_pub_priv_keys() -> Result<(String, String), String> {
         .map_err(|e| format!("Failed to generate public key: {}", e))?;
 
     Ok((private_key, public_key))
+}
+
+/// Enum to represent the detected firewall system
+#[derive(Debug, Clone, Copy)]
+enum FirewallType {
+    Firewalld,
+    Iptables,
+}
+
+/// Detect which firewall system is running on the server
+fn detect_firewall_system() -> FirewallType {
+    let output = process::Command::new("pgrep").arg("firewalld").output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            println!("Detected firewalld running");
+            FirewallType::Firewalld
+        }
+        _ => {
+            println!("Firewalld not detected, using iptables");
+            FirewallType::Iptables
+        }
+    }
+}
+
+/// Calculate the network address from an IPv4 address
+/// For example: 10.19.11.1 becomes 10.19.11.0
+fn calculate_ipv4_network(ip: &Ipv4Addr) -> String {
+    let octets = ip.octets();
+    format!("{}.{}.{}.0", octets[0], octets[1], octets[2])
+}
+
+/// Generate firewalld PostUp and PostDown rules
+fn generate_firewalld_rules(answers: &InstallAnswers) -> String {
+    let network_ipv4 = calculate_ipv4_network(&answers.server_wg_ip);
+
+    format!(
+        "PostUp = firewall-cmd --zone=public --add-interface={} && firewall-cmd --add-port {}/udp && firewall-cmd --add-rich-rule='rule family=ipv4 source address={}/24 masquerade'
+PostDown = firewall-cmd --zone=public --remove-interface={} && firewall-cmd --remove-port {}/udp && firewall-cmd --remove-rich-rule='rule family=ipv4 source address={}/24 masquerade'",
+        answers.server_wg_nic,
+        answers.server_wg_port,
+        network_ipv4,
+        answers.server_wg_nic,
+        answers.server_wg_port,
+        network_ipv4
+    )
+}
+
+/// Generate iptables PostUp and PostDown rules
+fn generate_iptables_rules(answers: &InstallAnswers) -> String {
+    format!(
+        "PostUp = iptables -I INPUT -p udp --dport {} -j ACCEPT
+PostUp = iptables -I FORWARD -i {} -o {} -j ACCEPT
+PostUp = iptables -I FORWARD -i {} -j ACCEPT
+PostUp = iptables -t nat -A POSTROUTING -o {} -j MASQUERADE
+PostDown = iptables -D INPUT -p udp --dport {} -j ACCEPT
+PostDown = iptables -D FORWARD -i {} -o {} -j ACCEPT
+PostDown = iptables -D FORWARD -i {} -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -o {} -j MASQUERADE",
+        answers.server_wg_port,
+        answers.server_public_nic,
+        answers.server_wg_nic,
+        answers.server_wg_nic,
+        answers.server_public_nic,
+        answers.server_wg_port,
+        answers.server_public_nic,
+        answers.server_wg_nic,
+        answers.server_wg_nic,
+        answers.server_public_nic
+    )
+}
+
+/// Create the complete WireGuard server configuration file
+fn create_wireguard_config(answers: &InstallAnswers) {
+    let config_path = format!("/etc/wireguard/{}.conf", answers.server_wg_nic);
+
+    println!("Creating WireGuard configuration file: {}", config_path);
+
+    // Create the interface section
+    let interface_config = format!(
+        "[Interface]
+Address = {}/24
+ListenPort = {}
+PrivateKey = {}
+",
+        answers.server_wg_ip, answers.server_wg_port, answers.server_priv_key
+    );
+
+    // Write the interface configuration
+    fs::write(&config_path, interface_config)
+        .expect("Failed to write WireGuard interface configuration");
+
+    // Detect firewall system and generate appropriate rules
+    let firewall_type = detect_firewall_system();
+    let firewall_rules = match firewall_type {
+        FirewallType::Firewalld => generate_firewalld_rules(answers),
+        FirewallType::Iptables => generate_iptables_rules(answers),
+    };
+
+    // Append firewall rules to the configuration file
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&config_path)
+        .expect("Failed to open WireGuard configuration file for appending");
+
+    writeln!(file, "{}", firewall_rules)
+        .expect("Failed to write firewall rules to WireGuard configuration");
+
+    // Set secure permissions on the config file
+    let config_file_path = Path::new(&config_path);
+    set_permissions_recursive(config_file_path)
+        .expect("Failed to set permissions on WireGuard configuration file");
+
+    println!("WireGuard configuration file created successfully!");
 }
 
 /// Write InstallAnswers to /etc/wireguard/params file in the specified format
@@ -185,6 +300,9 @@ pub fn install_wireguard(os: OsType) {
     // Write configuration to params file
     println!("Writing WireGuard configuration to /etc/wireguard/params...");
     write_params_file(&answers).expect("Failed to write WireGuard parameters file");
+
+    // Create the WireGuard server configuration file
+    create_wireguard_config(&answers);
 
     println!("WireGuard installation and configuration completed successfully!");
 }
