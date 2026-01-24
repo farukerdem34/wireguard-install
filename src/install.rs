@@ -2,7 +2,7 @@ use crate::client::new_client;
 use crate::enums::OsType;
 use crate::models::InstallAnswers;
 use crate::utils::{clear_terminal, set_permissions_recursive};
-use dialoguer::{Confirm, Input};
+use dialoguer::{Confirm, Input, Select};
 use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
@@ -10,6 +10,13 @@ use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process;
+
+/// Enum to represent different types of IPv4 addresses
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum IpAddressType {
+    Public,
+    Private,
+}
 
 /// Generate a WireGuard private key using the `wg genkey` command
 fn generate_wg_private_key() -> Result<String, String> {
@@ -82,40 +89,123 @@ pub fn create_pub_priv_keys() -> Result<(String, String), String> {
     Ok((private_key, public_key))
 }
 
-/// Detect the server's public IP address using external services
-fn detect_public_ip() -> Result<String, String> {
-    println!("Detecting server's public IP address...");
+/// Determine if an IPv4 address is private or public
+/// Filters out loopback (127.x.x.x) and link-local (169.254.x.x) addresses
+fn classify_ipv4_address(ip: &Ipv4Addr) -> Option<IpAddressType> {
+    // Filter out loopback addresses (127.x.x.x)
+    if ip.is_loopback() {
+        return None;
+    }
 
-    // List of reliable IP detection services to try
-    let services = [
-        "https://ipv4.icanhazip.com",
-        "https://api.ipify.org",
-        "https://checkip.amazonaws.com",
-    ];
+    // Filter out link-local addresses (169.254.x.x)
+    if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+        return None;
+    }
 
-    // Try each service with curl command
-    for service in &services {
-        let output = process::Command::new("curl")
-            .args(["-s", "--connect-timeout", "10", service])
-            .output();
+    // Check if it's a private address
+    if ip.is_private() {
+        Some(IpAddressType::Private)
+    } else {
+        Some(IpAddressType::Public)
+    }
+}
 
-        if let Ok(output) = output {
-            if output.status.success() {
-                let ip = String::from_utf8(output.stdout)
-                    .map_err(|e| format!("Failed to parse IP response: {}", e))?
-                    .trim()
-                    .to_string();
+/// Format an IP address with interface name and type for display in selection menu
+fn format_ip_display(ip: &Ipv4Addr, interface_name: &str, ip_type: IpAddressType) -> String {
+    let type_label = match ip_type {
+        IpAddressType::Public => "[Public]",
+        IpAddressType::Private => "[Private]",
+    };
+    format!("{} ({}) {}", ip, interface_name, type_label)
+}
 
-                // Basic validation - check if it looks like an IPv4 address
-                if ip.parse::<Ipv4Addr>().is_ok() && !ip.is_empty() {
-                    println!("Detected public IP: {}", ip);
-                    return Ok(ip);
-                }
+/// Collect and filter IPv4 addresses from all network interfaces
+/// Returns a vector of tuples: (IPv4 address, interface name, address type)
+fn collect_selectable_ipv4_addresses() -> Result<Vec<(Ipv4Addr, String, IpAddressType)>, String> {
+    let interfaces = netwatcher::list_interfaces()
+        .map_err(|e| format!("Failed to list network interfaces: {}", e))?;
+
+    let mut selectable_ips = Vec::new();
+
+    for (_index, interface) in interfaces {
+        for ipv4_addr in interface.ipv4_ips() {
+            if let Some(ip_type) = classify_ipv4_address(ipv4_addr) {
+                selectable_ips.push((*ipv4_addr, interface.name.clone(), ip_type));
             }
         }
     }
 
-    Err("Failed to detect public IP from all services".to_string())
+    // Sort by preference: public IPs first, then private IPs
+    selectable_ips.sort_by(|a, b| {
+        match (a.2, b.2) {
+            (IpAddressType::Public, IpAddressType::Private) => std::cmp::Ordering::Less,
+            (IpAddressType::Private, IpAddressType::Public) => std::cmp::Ordering::Greater,
+            _ => a.0.cmp(&b.0), // Same type, sort by IP address
+        }
+    });
+
+    Ok(selectable_ips)
+}
+
+/// Prompt user to manually enter an IP address when no interfaces are detected
+fn prompt_manual_ip_input() -> Result<String, String> {
+    println!("No suitable IPv4 addresses found on network interfaces.");
+    println!("Please enter the server's IPv4 address manually.");
+
+    let manual_ip: String = Input::new()
+        .with_prompt("Server IPv4 address")
+        .validate_with(|ip: &String| {
+            ip.parse::<Ipv4Addr>()
+                .map(|_| ())
+                .map_err(|_| "Invalid IPv4 address format")
+        })
+        .interact_text()
+        .map_err(|e| format!("Input error: {}", e))?;
+
+    println!("Using manually entered IP address: {}", manual_ip);
+    Ok(manual_ip)
+}
+
+/// Detect server's IPv4 address by listing interfaces and letting user choose
+fn detect_public_ip() -> Result<String, String> {
+    println!("Scanning network interfaces for IPv4 addresses...");
+
+    // Collect and filter IPv4 addresses from all network interfaces
+    let available_ips = collect_selectable_ipv4_addresses()?;
+
+    if available_ips.is_empty() {
+        // Fallback: Manual input when no interfaces detected
+        return prompt_manual_ip_input();
+    }
+
+    // Present selection menu to user
+    let display_options: Vec<String> = available_ips
+        .iter()
+        .map(|(ip, iface, ip_type)| format_ip_display(ip, iface, *ip_type))
+        .collect();
+
+    println!(
+        "Found {} IPv4 address(es) on network interfaces:",
+        available_ips.len()
+    );
+
+    let selection = Select::new()
+        .with_prompt("Select IPv4 address for WireGuard server")
+        .items(&display_options)
+        .default(0) // Default to first (best) option - public IPs are sorted first
+        .interact()
+        .map_err(|e| format!("Selection error: {}", e))?;
+
+    let selected_ip = available_ips[selection].0;
+    let selected_interface = &available_ips[selection].1;
+    let selected_type = available_ips[selection].2;
+
+    println!(
+        "Selected IP address: {} from interface {} ({:?})",
+        selected_ip, selected_interface, selected_type
+    );
+
+    Ok(selected_ip.to_string())
 }
 
 /// Check if a network interface exists using netwatcher
