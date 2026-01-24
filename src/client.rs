@@ -14,7 +14,7 @@ pub struct WireguardParams {
     pub server_pub_nic: String,
     pub server_wg_nic: String,
     pub server_wg_ipv4: Ipv4Addr,
-    pub server_wg_ipv6: String,
+    pub server_wg_ipv6: Option<String>,
     pub server_port: u16,
     pub server_priv_key: String,
     pub server_pub_key: String,
@@ -31,7 +31,7 @@ pub struct ClientConfig {
     pub public_key: String,
     pub preshared_key: String,
     pub ipv4: Ipv4Addr,
-    pub ipv6: String,
+    pub ipv6: Option<String>,
     pub home_dir: PathBuf,
 }
 
@@ -56,7 +56,7 @@ pub fn new_client() -> Result<(), String> {
 
     // Step 3: Find available IP addresses
     let client_ipv4 = find_available_ipv4(&params.server_wg_ipv4, &params.server_wg_nic)?;
-    let client_ipv6 = find_available_ipv6(&params.server_wg_ipv6, &params.server_wg_nic)?;
+    let client_ipv6 = find_available_ipv6(params.server_wg_ipv6.as_ref(), &params.server_wg_nic);
 
     // Step 4: Generate client keys
     let (client_private_key, client_public_key, client_preshared_key) = generate_client_keys()?;
@@ -71,7 +71,7 @@ pub fn new_client() -> Result<(), String> {
         public_key: client_public_key.clone(),
         preshared_key: client_preshared_key.clone(),
         ipv4: client_ipv4,
-        ipv6: client_ipv6.clone(),
+        ipv6: client_ipv6,
         home_dir,
     };
 
@@ -115,6 +115,12 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
     // Parse key=value pairs
     let vars = parse_shell_vars(&content)?;
 
+    // Load server IPv6 configuration (optional)
+    let server_wg_ipv6 = get_optional_var(&vars, "SERVER_WG_IPV6");
+    if server_wg_ipv6.is_none() {
+        println!("ℹ️  IPv6 not configured in server parameters, using IPv4-only mode");
+    }
+
     // Convert to structured config with validation
     Ok(WireguardParams {
         server_pub_nic: get_required_var(&vars, "SERVER_PUB_NIC")?,
@@ -122,7 +128,7 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
         server_wg_ipv4: get_required_var(&vars, "SERVER_WG_IPV4")?
             .parse::<Ipv4Addr>()
             .map_err(|e| format!("Invalid SERVER_WG_IPV4: {}", e))?,
-        server_wg_ipv6: get_required_var(&vars, "SERVER_WG_IPV6")?,
+        server_wg_ipv6,
         server_port: get_required_var(&vars, "SERVER_PORT")?
             .parse::<u16>()
             .map_err(|e| format!("Invalid SERVER_PORT: {}", e))?,
@@ -177,6 +183,19 @@ fn get_required_var(vars: &HashMap<String, String>, key: &str) -> Result<String,
     vars.get(key)
         .ok_or_else(|| format!("Missing required parameter: {}", key))
         .map(|v| v.clone())
+}
+
+/// Get an optional variable from the parsed vars map
+/// Returns None if missing or empty, Some(value) if present and valid
+fn get_optional_var(vars: &HashMap<String, String>, key: &str) -> Option<String> {
+    vars.get(key).and_then(|v| {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 /// Format server endpoint, handling IPv6 bracket requirements
@@ -257,16 +276,22 @@ fn find_available_ipv4(server_ipv4: &Ipv4Addr, server_wg_nic: &str) -> Result<Ip
 }
 
 /// Find an available IPv6 address in the server's subnet
-fn find_available_ipv6(server_ipv6: &str, server_wg_nic: &str) -> Result<String, String> {
+/// Returns None if IPv6 is not configured or invalid, Some(address) if available
+fn find_available_ipv6(server_ipv6: Option<&String>, server_wg_nic: &str) -> Option<String> {
+    // If no server IPv6 is configured, return None
+    let server_ipv6 = server_ipv6?;
+
     let config_path = format!("/etc/wireguard/{}.conf", server_wg_nic);
-    let config_content = fs::read_to_string(&config_path)
-        .map_err(|e| format!("Failed to read server config: {}", e))?;
+    let config_content = match fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(_) => return None, // Fail gracefully if can't read server config
+    };
 
     // Extract base IPv6 (everything before ::)
     let base_ip = if let Some((prefix, _)) = server_ipv6.split_once("::") {
         prefix
     } else {
-        return Err("Invalid IPv6 format in server configuration".to_string());
+        return None; // Invalid IPv6 format, treat as not configured
     };
 
     // Try IPv6 addresses from 2 to 254
@@ -275,11 +300,11 @@ fn find_available_ipv6(server_ipv6: &str, server_wg_nic: &str) -> Result<String,
         let search_pattern = format!("{}/128", test_ipv6);
 
         if !config_content.contains(&search_pattern) {
-            return Ok(test_ipv6);
+            return Some(test_ipv6);
         }
     }
 
-    Err("No available IPv6 addresses in subnet".to_string())
+    None // No available IPv6 addresses in subnet
 }
 
 /// Generate WireGuard key pair and preshared key
@@ -369,10 +394,16 @@ fn create_client_config_file(
         std::env::var("SERVER_PUB_IP").unwrap_or_else(|_| params.server_wg_ipv4.to_string());
     let endpoint = format_endpoint(&server_pub_ip, params.server_port);
 
+    // Build address line - conditionally include IPv6
+    let address_line = match &client.ipv6 {
+        Some(ipv6) => format!("{}/32,{}/128", client.ipv4, ipv6),
+        None => format!("{}/32", client.ipv4),
+    };
+
     let config_content = format!(
         "[Interface]\n\
          PrivateKey = {}\n\
-         Address = {}/32,{}/128\n\
+         Address = {}\n\
          DNS = {},{}\n\n\
          # Uncomment the next line to set a custom MTU\n\
          # This might impact performance, so use it only if you know what you are doing\n\
@@ -384,8 +415,7 @@ fn create_client_config_file(
          Endpoint = {}\n\
          AllowedIPs = {}",
         client.private_key,
-        client.ipv4,
-        client.ipv6,
+        address_line,
         params.client_dns_1,
         params.client_dns_2,
         params.server_pub_key,
@@ -412,13 +442,19 @@ fn add_client_to_server_config(
 ) -> Result<(), String> {
     let server_config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);
 
+    // Build AllowedIPs line - conditionally include IPv6
+    let allowed_ips = match &client.ipv6 {
+        Some(ipv6) => format!("{}/32,{}/128", client.ipv4, ipv6),
+        None => format!("{}/32", client.ipv4),
+    };
+
     let client_peer_config = format!(
         "\n### Client {}\n\
          [Peer]\n\
          PublicKey = {}\n\
          PresharedKey = {}\n\
-         AllowedIPs = {}/32,{}/128",
-        client.name, client.public_key, client.preshared_key, client.ipv4, client.ipv6
+         AllowedIPs = {}",
+        client.name, client.public_key, client.preshared_key, allowed_ips
     );
 
     // Append client configuration to server config
