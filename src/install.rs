@@ -555,22 +555,54 @@ pub fn install_wireguard(os: OsType) {
         }
     };
     for cmd in cmds {
-        let words = cmd.split_whitespace().collect::<Vec<&str>>();
-        let _ = process::Command::new("sh")
+        println!("Installing packages: {}", cmd);
+        let status = process::Command::new("sh")
             .arg("-c")
-            .args(words)
-            .stderr(process::Stdio::null())
-            .stdout(process::Stdio::null())
-            .status();
+            .arg(cmd)
+            .status()
+            .expect("Failed to execute package installation command");
+
+        if !status.success() {
+            eprintln!("Package installation failed for command: {}", cmd);
+            eprintln!("WireGuard installation incomplete. Please install WireGuard manually and try again.");
+            process::exit(1);
+        }
     }
-    if !process::Command::new("sh")
-        .args(vec!["-c", "command", "-v", "wg"])
-        .status()
-        .expect("failed to find wg command")
-        .success()
-    {
-        eprintln!("WireGuard couldn't be installed successfully. Exiting...");
+    // Verify WireGuard installation by checking for the wg command
+    println!("Verifying WireGuard installation...");
+    let wg_check = process::Command::new("sh")
+        .args(["-c", "command -v wg"])
+        .output()
+        .expect("Failed to check for wg command");
+
+    if !wg_check.status.success() {
+        eprintln!("Error: 'wg' command not found after installation.");
+        eprintln!("WireGuard may not have been installed correctly.");
+        eprintln!("Please verify your package manager and try installing WireGuard manually:");
+        eprintln!("  - For Debian/Ubuntu: apt-get install wireguard");
+        eprintln!("  - For Fedora: dnf install wireguard-tools");
+        eprintln!("  - For CentOS/RHEL: yum install wireguard-tools");
         process::exit(1);
+    }
+
+    // Additional verification: try to run wg with --version to ensure it's working
+    let wg_version_check = process::Command::new("wg").arg("--version").output();
+
+    match wg_version_check {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            println!("WireGuard verification successful: {}", version.trim());
+        }
+        Ok(_) => {
+            eprintln!("Warning: 'wg' command exists but may not be functioning correctly.");
+            eprintln!("Continuing with installation...");
+        }
+        Err(e) => {
+            eprintln!("Error: Failed to execute 'wg --version': {}", e);
+            eprintln!("This suggests WireGuard is not properly installed or accessible.");
+            eprintln!("Please check your WireGuard installation and PATH environment variable.");
+            process::exit(1);
+        }
     }
 
     let _ = fs::create_dir("/etc/wireguard");
