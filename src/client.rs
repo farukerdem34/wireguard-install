@@ -1,0 +1,491 @@
+use dialoguer::Input;
+use qrcode::render::unicode;
+use qrcode::QrCode;
+use regex::Regex;
+use std::collections::HashMap;
+use std::fs;
+use std::net::Ipv4Addr;
+use std::path::PathBuf;
+use std::process::Command;
+
+/// WireGuard server configuration loaded from /etc/wireguard/params
+#[derive(Debug, Clone)]
+pub struct WireguardParams {
+    pub server_pub_nic: String,
+    pub server_wg_nic: String,
+    pub server_wg_ipv4: Ipv4Addr,
+    pub server_wg_ipv6: String,
+    pub server_port: u16,
+    pub server_priv_key: String,
+    pub server_pub_key: String,
+    pub client_dns_1: Ipv4Addr,
+    pub client_dns_2: Ipv4Addr,
+    pub allowed_ips: String,
+}
+
+/// Client configuration structure
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    pub name: String,
+    pub private_key: String,
+    pub public_key: String,
+    pub preshared_key: String,
+    pub ipv4: Ipv4Addr,
+    pub ipv6: String,
+    pub home_dir: PathBuf,
+}
+
+/// Main entry point for creating a new WireGuard client
+/// This function loads server parameters and guides through interactive client creation
+pub fn new_client() -> Result<(), String> {
+    println!("Loading WireGuard server configuration...");
+
+    // Step 1: Load server configuration from /etc/wireguard/params
+    let params = load_wireguard_params()
+        .map_err(|e| format!("Failed to load server configuration: {}", e))?;
+
+    println!("✓ Server configuration loaded successfully");
+
+    // Step 2: Interactive client creation
+    println!("");
+    println!("Client configuration");
+    println!("");
+    println!("The client name must consist of alphanumeric character(s). It may also include underscores or dashes and can't exceed 15 chars.");
+
+    let client_name = prompt_and_validate_client_name(&params.server_wg_nic)?;
+
+    // Step 3: Find available IP addresses
+    let client_ipv4 = find_available_ipv4(&params.server_wg_ipv4, &params.server_wg_nic)?;
+    let client_ipv6 = find_available_ipv6(&params.server_wg_ipv6, &params.server_wg_nic)?;
+
+    // Step 4: Generate client keys
+    let (client_private_key, client_public_key, client_preshared_key) = generate_client_keys()?;
+
+    // Step 5: Get home directory for client
+    let home_dir = get_home_dir_for_client(&client_name)?;
+
+    // Step 6: Create client configuration
+    let client_config = ClientConfig {
+        name: client_name.clone(),
+        private_key: client_private_key,
+        public_key: client_public_key.clone(),
+        preshared_key: client_preshared_key.clone(),
+        ipv4: client_ipv4,
+        ipv6: client_ipv6.clone(),
+        home_dir,
+    };
+
+    // Step 7: Create configuration file
+    create_client_config_file(&client_config, &params)?;
+
+    // Step 8: Add client to server configuration
+    add_client_to_server_config(&client_config, &params)?;
+
+    // Step 9: Sync WireGuard configuration
+    sync_wireguard_config(&params.server_wg_nic)?;
+
+    // Step 10: Generate QR code
+    let config_path = client_config.home_dir.join(format!(
+        "{}-client-{}.conf",
+        params.server_wg_nic, client_config.name
+    ));
+    generate_qr_code(&config_path)?;
+
+    println!("Your client config file is in {}", config_path.display());
+
+    Ok(())
+}
+
+/// Load WireGuard parameters from /etc/wireguard/params file
+pub fn load_wireguard_params() -> Result<WireguardParams, String> {
+    let params_path = "/etc/wireguard/params";
+
+    // Read the file content
+    let content = fs::read_to_string(params_path)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("WireGuard parameters file not found at {}\nPlease ensure WireGuard server is properly installed and configured.", params_path)
+            },
+            std::io::ErrorKind::PermissionDenied => {
+                format!("Permission denied reading {}\nPlease run this program with appropriate privileges (sudo).", params_path)
+            },
+            _ => format!("Failed to read {}: {}", params_path, e),
+        })?;
+
+    // Parse key=value pairs
+    let vars = parse_shell_vars(&content)?;
+
+    // Convert to structured config with validation
+    Ok(WireguardParams {
+        server_pub_nic: get_required_var(&vars, "SERVER_PUB_NIC")?,
+        server_wg_nic: get_required_var(&vars, "SERVER_WG_NIC")?,
+        server_wg_ipv4: get_required_var(&vars, "SERVER_WG_IPV4")?
+            .parse::<Ipv4Addr>()
+            .map_err(|e| format!("Invalid SERVER_WG_IPV4: {}", e))?,
+        server_wg_ipv6: get_required_var(&vars, "SERVER_WG_IPV6")?,
+        server_port: get_required_var(&vars, "SERVER_PORT")?
+            .parse::<u16>()
+            .map_err(|e| format!("Invalid SERVER_PORT: {}", e))?,
+        server_priv_key: get_required_var(&vars, "SERVER_PRIV_KEY")?,
+        server_pub_key: get_required_var(&vars, "SERVER_PUB_KEY")?,
+        client_dns_1: get_required_var(&vars, "CLIENT_DNS_1")?
+            .parse::<Ipv4Addr>()
+            .map_err(|e| format!("Invalid CLIENT_DNS_1: {}", e))?,
+        client_dns_2: get_required_var(&vars, "CLIENT_DNS_2")?
+            .parse::<Ipv4Addr>()
+            .map_err(|e| format!("Invalid CLIENT_DNS_2: {}", e))?,
+        allowed_ips: get_required_var(&vars, "ALLOWED_IPS")?,
+    })
+}
+
+/// Parse shell variable format (KEY=VALUE and KEY=${VAR})
+fn parse_shell_vars(content: &str) -> Result<HashMap<String, String>, String> {
+    let mut vars = HashMap::new();
+
+    for (line_num, line) in content.lines().enumerate() {
+        let line = line.trim();
+
+        // Skip empty lines and comments
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Parse KEY=VALUE format
+        if let Some((key, value)) = line.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+
+            // Handle shell variable substitution like ${VAR} -> VAR
+            let processed_value = if value.starts_with("${") && value.ends_with('}') {
+                // Extract variable name from ${VAR} and use it as value
+                &value[2..value.len() - 1]
+            } else {
+                value
+            };
+
+            vars.insert(key.to_string(), processed_value.to_string());
+        } else {
+            return Err(format!("Invalid format at line {}: {}", line_num + 1, line));
+        }
+    }
+
+    Ok(vars)
+}
+
+/// Get a required variable from the parsed vars map
+fn get_required_var(vars: &HashMap<String, String>, key: &str) -> Result<String, String> {
+    vars.get(key)
+        .ok_or_else(|| format!("Missing required parameter: {}", key))
+        .map(|v| v.clone())
+}
+
+/// Format server endpoint, handling IPv6 bracket requirements
+fn format_endpoint(server_ip: &str, port: u16) -> String {
+    // If SERVER_PUB_IP is IPv6, add brackets if missing
+    if server_ip.contains(':') && !server_ip.starts_with('[') {
+        format!("[{}]:{}", server_ip, port)
+    } else {
+        format!("{}:{}", server_ip, port)
+    }
+}
+
+/// Prompt user for client name and validate it
+fn prompt_and_validate_client_name(server_wg_nic: &str) -> Result<String, String> {
+    let name_regex = Regex::new(r"^[a-zA-Z0-9_-]+$").unwrap();
+
+    loop {
+        let client_name: String = Input::new()
+            .with_prompt("Client name")
+            .interact()
+            .map_err(|e| format!("Input error: {}", e))?;
+
+        // Validate name format
+        if !name_regex.is_match(&client_name) {
+            println!("");
+            println!("Invalid characters in client name. Use only alphanumeric characters, underscores, or dashes.");
+            println!("");
+            continue;
+        }
+
+        // Validate name length
+        if client_name.len() >= 16 {
+            println!("");
+            println!("Client name must be less than 16 characters.");
+            println!("");
+            continue;
+        }
+
+        // Check if client already exists
+        let config_path = format!("/etc/wireguard/{}.conf", server_wg_nic);
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            let search_pattern = format!("### Client {}", client_name);
+            if content.contains(&search_pattern) {
+                println!("");
+                println!("A client with the specified name was already created, please choose another name.");
+                println!("");
+                continue;
+            }
+        }
+
+        return Ok(client_name);
+    }
+}
+
+/// Find an available IPv4 address in the server's subnet
+fn find_available_ipv4(server_ipv4: &Ipv4Addr, server_wg_nic: &str) -> Result<Ipv4Addr, String> {
+    let config_path = format!("/etc/wireguard/{}.conf", server_wg_nic);
+    let config_content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read server config: {}", e))?;
+
+    // Extract base IP (first 3 octets)
+    let octets = server_ipv4.octets();
+    let base_ip = format!("{}.{}.{}", octets[0], octets[1], octets[2]);
+
+    // Try IPs from 2 to 254
+    for dot_ip in 2..255 {
+        let test_ip = format!("{}.{}", base_ip, dot_ip);
+        let search_pattern = format!("{}/32", test_ip);
+
+        if !config_content.contains(&search_pattern) {
+            return test_ip
+                .parse::<Ipv4Addr>()
+                .map_err(|e| format!("Failed to parse IP address: {}", e));
+        }
+    }
+
+    Err("The subnet configured supports only 253 clients.".to_string())
+}
+
+/// Find an available IPv6 address in the server's subnet
+fn find_available_ipv6(server_ipv6: &str, server_wg_nic: &str) -> Result<String, String> {
+    let config_path = format!("/etc/wireguard/{}.conf", server_wg_nic);
+    let config_content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read server config: {}", e))?;
+
+    // Extract base IPv6 (everything before ::)
+    let base_ip = if let Some((prefix, _)) = server_ipv6.split_once("::") {
+        prefix
+    } else {
+        return Err("Invalid IPv6 format in server configuration".to_string());
+    };
+
+    // Try IPv6 addresses from 2 to 254
+    for dot_ip in 2..255 {
+        let test_ipv6 = format!("{}::{}", base_ip, dot_ip);
+        let search_pattern = format!("{}/128", test_ipv6);
+
+        if !config_content.contains(&search_pattern) {
+            return Ok(test_ipv6);
+        }
+    }
+
+    Err("No available IPv6 addresses in subnet".to_string())
+}
+
+/// Generate WireGuard key pair and preshared key
+fn generate_client_keys() -> Result<(String, String, String), String> {
+    // Generate private key
+    let private_key_output = Command::new("wg")
+        .arg("genkey")
+        .output()
+        .map_err(|e| format!("Failed to generate private key: {}", e))?;
+
+    if !private_key_output.status.success() {
+        return Err("wg genkey command failed".to_string());
+    }
+
+    let private_key = String::from_utf8(private_key_output.stdout)
+        .map_err(|e| format!("Invalid UTF-8 in private key: {}", e))?
+        .trim()
+        .to_string();
+
+    // Generate public key from private key
+    let mut public_key_cmd = Command::new("wg")
+        .arg("pubkey")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start wg pubkey: {}", e))?;
+
+    // Write private key to stdin
+    use std::io::Write;
+    if let Some(stdin) = public_key_cmd.stdin.take() {
+        let mut stdin = stdin;
+        stdin
+            .write_all(private_key.as_bytes())
+            .map_err(|e| format!("Failed to write to wg pubkey stdin: {}", e))?;
+    }
+
+    let public_key_result = public_key_cmd
+        .wait_with_output()
+        .map_err(|e| format!("Failed to get wg pubkey output: {}", e))?;
+
+    if !public_key_result.status.success() {
+        return Err("wg pubkey command failed".to_string());
+    }
+
+    let public_key = String::from_utf8(public_key_result.stdout)
+        .map_err(|e| format!("Invalid UTF-8 in public key: {}", e))?
+        .trim()
+        .to_string();
+
+    // Generate preshared key
+    let preshared_key_output = Command::new("wg")
+        .arg("genpsk")
+        .output()
+        .map_err(|e| format!("Failed to generate preshared key: {}", e))?;
+
+    if !preshared_key_output.status.success() {
+        return Err("wg genpsk command failed".to_string());
+    }
+
+    let preshared_key = String::from_utf8(preshared_key_output.stdout)
+        .map_err(|e| format!("Invalid UTF-8 in preshared key: {}", e))?
+        .trim()
+        .to_string();
+
+    Ok((private_key, public_key, preshared_key))
+}
+
+/// Get home directory for client (equivalent to getHomeDirForClient bash function)
+fn get_home_dir_for_client(_client_name: &str) -> Result<PathBuf, String> {
+    // For now, we'll use the current user's home directory
+    // In a real implementation, this might need to determine the actual user's home
+    if let Some(home) = std::env::var_os("HOME") {
+        Ok(PathBuf::from(home))
+    } else {
+        // Fallback to /root for root user or /tmp
+        Ok(PathBuf::from("/root"))
+    }
+}
+
+/// Create client configuration file
+fn create_client_config_file(
+    client: &ClientConfig,
+    params: &WireguardParams,
+) -> Result<(), String> {
+    // Use server's public IP for endpoint, format properly for IPv6
+    let server_pub_ip =
+        std::env::var("SERVER_PUB_IP").unwrap_or_else(|_| params.server_wg_ipv4.to_string());
+    let endpoint = format_endpoint(&server_pub_ip, params.server_port);
+
+    let config_content = format!(
+        "[Interface]\n\
+         PrivateKey = {}\n\
+         Address = {}/32,{}/128\n\
+         DNS = {},{}\n\n\
+         # Uncomment the next line to set a custom MTU\n\
+         # This might impact performance, so use it only if you know what you are doing\n\
+         # See https://github.com/nitred/nr-wg-mtu-finder to find your optimal MTU\n\
+         # MTU = 1420\n\n\
+         [Peer]\n\
+         PublicKey = {}\n\
+         PresharedKey = {}\n\
+         Endpoint = {}\n\
+         AllowedIPs = {}",
+        client.private_key,
+        client.ipv4,
+        client.ipv6,
+        params.client_dns_1,
+        params.client_dns_2,
+        params.server_pub_key,
+        client.preshared_key,
+        endpoint,
+        params.allowed_ips
+    );
+
+    let config_path = client.home_dir.join(format!(
+        "{}-client-{}.conf",
+        params.server_wg_nic, client.name
+    ));
+
+    fs::write(&config_path, config_content)
+        .map_err(|e| format!("Failed to write client config: {}", e))?;
+
+    Ok(())
+}
+
+/// Add client as peer to server configuration
+fn add_client_to_server_config(
+    client: &ClientConfig,
+    params: &WireguardParams,
+) -> Result<(), String> {
+    let server_config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);
+
+    let client_peer_config = format!(
+        "\n### Client {}\n\
+         [Peer]\n\
+         PublicKey = {}\n\
+         PresharedKey = {}\n\
+         AllowedIPs = {}/32,{}/128",
+        client.name, client.public_key, client.preshared_key, client.ipv4, client.ipv6
+    );
+
+    // Append client configuration to server config
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&server_config_path)
+        .and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(client_peer_config.as_bytes())
+        })
+        .map_err(|e| format!("Failed to update server config: {}", e))?;
+
+    Ok(())
+}
+
+/// Sync WireGuard configuration with running interface
+fn sync_wireguard_config(interface: &str) -> Result<(), String> {
+    let output = Command::new("wg")
+        .arg("syncconf")
+        .arg(interface)
+        .arg(format!("/dev/stdin"))
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            // Generate stripped config for syncconf
+            let strip_output = Command::new("wg-quick")
+                .arg("strip")
+                .arg(interface)
+                .output()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+            if let Some(stdin) = child.stdin.as_mut() {
+                use std::io::Write;
+                stdin.write_all(&strip_output.stdout)?;
+            }
+
+            child.wait()
+        })
+        .map_err(|e| format!("Failed to sync WireGuard config: {}", e))?;
+
+    if !output.success() {
+        return Err("wg syncconf command failed".to_string());
+    }
+
+    Ok(())
+}
+
+/// Generate and display QR code for client configuration
+fn generate_qr_code(config_path: &PathBuf) -> Result<(), String> {
+    let config_content = fs::read_to_string(config_path)
+        .map_err(|e| format!("Failed to read config file: {}", e))?;
+
+    let code =
+        QrCode::new(config_content).map_err(|e| format!("Failed to generate QR code: {}", e))?;
+
+    let image = code
+        .render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .build();
+
+    println!("");
+    println!("Here is your client config file as a QR Code:");
+    println!("");
+    println!("{}", image);
+    println!("");
+
+    Ok(())
+}

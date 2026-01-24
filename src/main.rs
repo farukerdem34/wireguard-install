@@ -5,6 +5,7 @@ mod install;
 mod checks;
 mod os_detection;
 mod initialization;
+mod client;
 
 use crate::initialization::initial_check;
 

@@ -1,3 +1,4 @@
+use crate::client::new_client;
 use crate::enums::OsType;
 use crate::models::InstallAnswers;
 use crate::utils::set_permissions_recursive;
@@ -482,8 +483,10 @@ pub fn install_wireguard(os: OsType) {
 
     // Configure and start WireGuard service based on OS
     configure_wireguard_service(os, &answers.server_wg_nic);
-
+    new_client();
     println!("WireGuard installation and configuration completed successfully!");
+    println!("If you want to add more clients, you simply need to run this script another time!")
+    std::process::exit(0);
 }
 
 pub fn install_question() -> InstallAnswers {
