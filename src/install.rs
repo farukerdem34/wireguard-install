@@ -1,12 +1,13 @@
 use crate::client::new_client;
 use crate::enums::OsType;
-use crate::models::InstallAnswers;
+use crate::interface::save_multi_interface_config;
+use crate::models::{GlobalSettings, InstallAnswers, InterfaceConfig, MultiInterfaceConfig};
 use crate::utils::{clear_terminal, set_permissions_recursive};
 use dialoguer::{Confirm, Input, Select};
 use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::{Write, stdout};
+use std::io::{stdout, Write};
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process;
@@ -240,7 +241,11 @@ fn find_default_route_interface() -> Result<String, String> {
     }
 
     // Try netstat as alternative
-    if let Ok(output) = process::Command::new("netstat").args(["-rn"]).stdout(process::Stdio::piped()).output() {
+    if let Ok(output) = process::Command::new("netstat")
+        .args(["-rn"])
+        .stdout(process::Stdio::piped())
+        .output()
+    {
         if output.status.success() {
             let netstat_output = String::from_utf8_lossy(&output.stdout);
             // Look for default route (0.0.0.0 or 0/0)
@@ -295,7 +300,10 @@ enum FirewallType {
 
 /// Detect which firewall system is running on the server
 fn detect_firewall_system() -> FirewallType {
-    let output = process::Command::new("pgrep").arg("firewalld").stdout(process::Stdio::piped()).output();
+    let output = process::Command::new("pgrep")
+        .arg("firewalld")
+        .stdout(process::Stdio::piped())
+        .output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -691,7 +699,10 @@ pub fn install_wireguard(os: OsType) {
     }
 
     // Additional verification: try to run wg with --version to ensure it's working
-    let wg_version_check = process::Command::new("wg").arg("--version").stdout(process::Stdio::piped()).output();
+    let wg_version_check = process::Command::new("wg")
+        .arg("--version")
+        .stdout(process::Stdio::piped())
+        .output();
 
     match wg_version_check {
         Ok(output) if output.status.success() => {
@@ -723,9 +734,14 @@ pub fn install_wireguard(os: OsType) {
     answers.server_priv_key = server_private_key;
     answers.server_pub_key = server_public_key;
 
-    // Write configuration to params file
+    // Write configuration to params file (for backward compatibility)
     println!("Writing WireGuard configuration to /etc/wireguard/params...");
     write_params_file(&answers).expect("Failed to write WireGuard parameters file");
+
+    // Create multi-interface configuration
+    println!("Setting up multi-interface configuration...");
+    create_initial_multi_interface_config(&answers)
+        .expect("Failed to create multi-interface configuration");
 
     // Create the WireGuard server configuration file
     create_wireguard_config(&answers);
@@ -745,6 +761,42 @@ pub fn install_wireguard(os: OsType) {
     println!("WireGuard installation and configuration completed successfully!");
     println!("If you want to add more clients, you simply need to run this script another time!");
     std::process::exit(0);
+}
+
+/// Create initial multi-interface configuration from InstallAnswers
+fn create_initial_multi_interface_config(answers: &InstallAnswers) -> Result<(), String> {
+    let mut config = MultiInterfaceConfig::new();
+
+    // Set global settings
+    config.global_settings = GlobalSettings {
+        server_pub_ip: answers.server_pub_ip,
+        server_pub_nic: answers.server_public_nic.clone(),
+        dns_servers: vec![answers.client_dns_1, answers.client_dns_2],
+        allowed_ips: answers.allowed_ips.clone(),
+    };
+
+    // Create interface configuration for the initial installation
+    let interface_config = InterfaceConfig {
+        name: answers.server_wg_nic.clone(),
+        subnet: answers.server_wg_subnet.clone(),
+        server_ip: answers.server_wg_ip,
+        port: answers.server_wg_port,
+        private_key: answers.server_priv_key.clone(),
+        public_key: answers.server_pub_key.clone(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        active: true,
+    };
+
+    // Add the interface to the configuration
+    config
+        .interfaces
+        .insert(answers.server_wg_nic.clone(), interface_config);
+    config.next_suggested_port = answers.server_wg_port + 1;
+
+    // Save the configuration
+    save_multi_interface_config(&config)?;
+
+    Ok(())
 }
 
 pub fn install_question() -> InstallAnswers {
@@ -801,16 +853,20 @@ You can keep the default options and just press enter if you are ok with them.
         .default("wg0".to_string())
         .interact_text()
         .unwrap();
-    let server_wg_ip: String = Input::new()
-        .with_prompt("Server WireGuard IPv4: ")
-        .default("10.19.11.1".to_string())
-        .validate_with(|ip: &String| {
-            ip.parse::<Ipv4Addr>()
+    let server_wg_subnet: String = Input::new()
+        .with_prompt("Server WireGuard subnet (CIDR format, e.g., 10.19.0.0/16, 172.16.50.0/24)")
+        .default("10.19.11.0/24".to_string())
+        .validate_with(|subnet: &String| {
+            crate::network::validate_subnet(subnet)
                 .map(|_| ())
-                .map_err(|_| "Invalid IPv4 address")
+                .map_err(|e| e.to_string())
         })
         .interact_text()
         .unwrap();
+
+    // Get server IP from subnet (first usable IP)
+    let server_ip = crate::network::get_server_ip_from_subnet(&server_wg_subnet)
+        .expect("Failed to determine server IP from subnet");
     let server_port: String = Input::new()
         .with_prompt("Server port: ")
         .default("51820".to_string())
@@ -855,9 +911,8 @@ Allowed IPs list for generated clients (leave default to route everything):
             .expect("Failed to parse public IPv4 address"),
         server_public_nic: server_public_nic,
         server_pub_ipv6: server_public_ipv6,
-        server_wg_ip: server_wg_ip
-            .parse::<Ipv4Addr>()
-            .expect("Failed to parse wg0 IP"),
+        server_wg_ip: server_ip,
+        server_wg_subnet: server_wg_subnet,
         server_wg_nic: server_wg_interface,
         server_wg_port: server_port.parse::<u16>().expect("Failed to parse port"),
         server_priv_key: String::new(), // Will be filled later

@@ -1,6 +1,8 @@
 use crate::checks::{check_virtualization, is_root};
 use crate::client::{list_clients, new_client, revoke_client};
 use crate::install::install_wireguard;
+use crate::interface::{create_new_interface, list_interfaces, remove_interface};
+use crate::migration::check_migration_status;
 use crate::os_detection::get_os;
 use crate::uninstall::uninstall_wireguard;
 use crate::utils::clear_terminal;
@@ -14,8 +16,14 @@ pub async fn initial_check() -> io::Result<()> {
     let os = get_os();
     println!("Detected OS: {:?}", os);
 
-    // Check if WireGuard is already installed by looking for params file
-    if Path::new("/etc/wireguard/params").exists() {
+    // Check for migration needs and perform if necessary
+    if let Err(e) = check_migration_status() {
+        eprintln!("Migration error: {}", e);
+        return Ok(());
+    }
+
+    // Check if WireGuard is installed (either old format or new format)
+    if Path::new("/etc/wireguard/params").exists() || Path::new("/etc/wireguard/interfaces.json").exists() {
         // WireGuard is installed, show management menu
         if let Err(e) = show_management_menu() {
             eprintln!("Error: {}", e);
@@ -36,10 +44,13 @@ fn show_management_menu() -> Result<(), String> {
         println!();
 
         let options = vec![
-            "New Client",
-            "List Clients",
+            "Add Client",
+            "List Clients", 
             "Revoke Client",
-            "Uninstall Wireguard",
+            "Add Interface",
+            "List Interfaces",
+            "Remove Interface",
+            "Uninstall WireGuard",
             "Exit",
         ];
 
@@ -52,18 +63,16 @@ fn show_management_menu() -> Result<(), String> {
 
         match selection {
             0 => {
-                // New Client - DO NOT clear immediately
+                // Add Client
                 if let Err(e) = new_client() {
                     println!("Error creating client: {}", e);
                 }
-                // Clear after new_client completes (it handles its own clearing)
             }
             1 => {
                 // List Clients
                 if let Err(e) = list_clients() {
                     println!("Error listing clients: {}", e);
                 }
-                // Clear terminal after showing client list
                 clear_terminal();
             }
             2 => {
@@ -71,19 +80,38 @@ fn show_management_menu() -> Result<(), String> {
                 if let Err(e) = revoke_client() {
                     println!("Error revoking client: {}", e);
                 }
-                // Clear terminal after revoking client
                 clear_terminal();
             }
             3 => {
-                // Uninstall Wireguard
+                // Add Interface
+                if let Err(e) = create_new_interface() {
+                    println!("Error creating interface: {}", e);
+                }
+                clear_terminal();
+            }
+            4 => {
+                // List Interfaces
+                if let Err(e) = list_interfaces() {
+                    println!("Error listing interfaces: {}", e);
+                }
+                clear_terminal();
+            }
+            5 => {
+                // Remove Interface
+                if let Err(e) = remove_interface() {
+                    println!("Error removing interface: {}", e);
+                }
+                clear_terminal();
+            }
+            6 => {
+                // Uninstall WireGuard
                 if let Err(e) = uninstall_wireguard() {
                     println!("Error during uninstall: {}", e);
                     return Err(e);
                 }
-                // Uninstall completes successfully, exit the program
                 break;
             }
-            4 => {
+            7 => {
                 // Exit
                 println!("👋 Goodbye!");
                 break;
