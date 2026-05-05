@@ -2,7 +2,7 @@
 set -e
 
 USERNAME="wgmanagement"
-SHELL_PATH="/usr/local/bin/wireguard-install"
+SHELL_PATH="/usr/local/bin/wireguard-install-wrapper.sh"
 
 if ! getent passwd "$USERNAME" >/dev/null 2>&1; then
     useradd -M -s "$SHELL_PATH" "$USERNAME"

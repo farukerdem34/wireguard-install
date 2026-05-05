@@ -160,9 +160,11 @@ cargo build --release
 cargo deb
 ```
 
-The package installs the binary to `/usr/local/bin/wireguard-install`.
-During installation it creates a `wgmanagement` user with no home directory
-and prints a randomly generated password once.
+The package installs the binary to `/usr/local/bin/wireguard-install` and
+adds a wrapper at `/usr/local/bin/wireguard-install-wrapper.sh`.
+During installation it creates a `wgmanagement` user with no home directory,
+sets the wrapper as the login shell, grants passwordless sudo for
+`/usr/local/bin/wireguard-install`, and prints a randomly generated password once.
 
 ### Development Build
 ```bash
