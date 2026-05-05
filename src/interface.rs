@@ -1,17 +1,25 @@
-use crate::models::{GlobalSettings, InterfaceConfig, MultiInterfaceConfig};
+use crate::models::{InterfaceConfig, MultiInterfaceConfig};
 use crate::network::{
     detect_subnet_conflicts, get_server_ip_from_subnet, is_port_in_use, suggest_available_port,
     validate_subnet,
 };
 use dialoguer::{Confirm, Input, Select};
-use rand::Rng;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 const MULTI_INTERFACE_CONFIG_PATH: &str = "/etc/wireguard/interfaces.json";
-const GLOBAL_CONFIG_PATH: &str = "/etc/wireguard/global.conf";
+
+fn ensure_wireguard_directory() -> Result<(), String> {
+    let dir_path = Path::new("/etc/wireguard");
+
+    if !dir_path.exists() {
+        fs::create_dir_all(dir_path)
+            .map_err(|e| format!("Failed to create /etc/wireguard directory: {}", e))?;
+    }
+
+    Ok(())
+}
 
 pub fn load_multi_interface_config() -> Result<MultiInterfaceConfig, String> {
     if Path::new(MULTI_INTERFACE_CONFIG_PATH).exists() {
@@ -26,6 +34,8 @@ pub fn load_multi_interface_config() -> Result<MultiInterfaceConfig, String> {
 }
 
 pub fn save_multi_interface_config(config: &MultiInterfaceConfig) -> Result<(), String> {
+    ensure_wireguard_directory()?;
+
     let json_content = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
@@ -37,6 +47,8 @@ pub fn save_multi_interface_config(config: &MultiInterfaceConfig) -> Result<(), 
 
 pub fn create_new_interface() -> Result<(), String> {
     println!("🔧 Creating new WireGuard interface");
+
+    ensure_wireguard_directory()?;
 
     let mut config = load_multi_interface_config()?;
 
@@ -80,7 +92,7 @@ pub fn create_new_interface() -> Result<(), String> {
     let port: u16 = port_input.parse().map_err(|_| "Invalid port number")?;
 
     // Validate port
-    if port < 1024 || port > 65535 {
+    if port < 1024 {
         return Err("Port must be between 1024 and 65535".to_string());
     }
 
@@ -257,14 +269,27 @@ fn generate_keys() -> Result<(String, String), String> {
         .to_string();
 
     // Generate public key from private key
-    let public_key_output = Command::new("wg")
-        .args(&["pubkey"])
-        .arg(&private_key)
-        .output()
-        .map_err(|e| format!("Failed to generate public key: {}", e))?;
+    let mut public_key_cmd = Command::new("wg")
+        .arg("pubkey")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start wg pubkey: {}", e))?;
+
+    if let Some(stdin) = public_key_cmd.stdin.take() {
+        let mut stdin = stdin;
+        use std::io::Write;
+        stdin
+            .write_all(private_key.as_bytes())
+            .map_err(|e| format!("Failed to write to wg pubkey stdin: {}", e))?;
+    }
+
+    let public_key_output = public_key_cmd
+        .wait_with_output()
+        .map_err(|e| format!("Failed to get wg pubkey output: {}", e))?;
 
     if !public_key_output.status.success() {
-        return Err("Failed to generate public key".to_string());
+        return Err("wg pubkey command failed".to_string());
     }
 
     let public_key = String::from_utf8(public_key_output.stdout)
@@ -276,25 +301,21 @@ fn generate_keys() -> Result<(String, String), String> {
 }
 
 fn create_interface_config_file(interface: &InterfaceConfig) -> Result<(), String> {
+    let prefix = extract_prefix_from_subnet(&interface.subnet)?;
+    let public_interface = get_public_interface()?;
+    
     let config_content = format!(
-        "[Interface]
-PrivateKey = {}
-Address = {}/{}
-ListenPort = {}
-PostUp = iptables -A FORWARD -i {} -j ACCEPT; iptables -A FORWARD -o {} -j ACCEPT; iptables -t nat -A POSTROUTING -o {} -j MASQUERADE
-PostDown = iptables -D FORWARD -i {} -j ACCEPT; iptables -D FORWARD -o {} -j ACCEPT; iptables -t nat -D POSTROUTING -o {} -j MASQUERADE
-
-",
+        "[Interface]\nPrivateKey = {}\nAddress = {}/{}\nListenPort = {}\nPostUp = iptables -A FORWARD -i {} -j ACCEPT; iptables -A FORWARD -o {} -j ACCEPT; iptables -t nat -A POSTROUTING -o {} -j MASQUERADE\nPostDown = iptables -D FORWARD -i {} -j ACCEPT; iptables -D FORWARD -o {} -j ACCEPT; iptables -t nat -D POSTROUTING -o {} -j MASQUERADE\n",
         interface.private_key,
         interface.server_ip,
-        extract_prefix_from_subnet(&interface.subnet)?,
+        prefix,
         interface.port,
         interface.name,
         interface.name,
-        get_public_interface()?,
+        public_interface,
         interface.name,
         interface.name,
-        get_public_interface()?
+        public_interface
     );
 
     let config_path = format!("/etc/wireguard/{}.conf", interface.name);
@@ -320,7 +341,7 @@ fn extract_prefix_from_subnet(subnet: &str) -> Result<u8, String> {
         .map_err(|_| format!("Invalid subnet prefix: {}", parts[1]))
 }
 
-fn get_public_interface() -> Result<String, String> {
+pub fn get_public_interface() -> Result<String, String> {
     // Try to detect the public interface using default route
     let output = Command::new("ip")
         .args(&["route", "show", "default"])
@@ -356,67 +377,185 @@ fn get_public_interface() -> Result<String, String> {
 }
 
 fn enable_interface(interface_name: &str) -> Result<(), String> {
-    // Enable interface
-    let enable_output = Command::new("systemctl")
-        .args(&["enable", &format!("wg-quick@{}", interface_name)])
+    // Try systemd first
+    if Command::new("systemctl")
+        .arg("--version")
         .output()
-        .map_err(|e| format!("Failed to enable interface {}: {}", interface_name, e))?;
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        // Enable interface with systemd
+        let enable_output = Command::new("systemctl")
+            .args(&["enable", &format!("wg-quick@{}", interface_name)])
+            .output()
+            .map_err(|e| format!("Failed to enable interface {}: {}", interface_name, e))?;
 
-    if !enable_output.status.success() {
-        let stderr = String::from_utf8_lossy(&enable_output.stderr);
-        return Err(format!(
-            "Failed to enable interface {}: {}",
-            interface_name, stderr
-        ));
+        if !enable_output.status.success() {
+            let stderr = String::from_utf8_lossy(&enable_output.stderr);
+            return Err(format!(
+                "Failed to enable interface {}: {}",
+                interface_name, stderr
+            ));
+        }
+
+        // Start interface with systemd
+        let start_output = Command::new("systemctl")
+            .args(&["start", &format!("wg-quick@{}", interface_name)])
+            .output()
+            .map_err(|e| format!("Failed to start interface {}: {}", interface_name, e))?;
+
+        if !start_output.status.success() {
+            let stderr = String::from_utf8_lossy(&start_output.stderr);
+            return Err(format!(
+                "Failed to start interface {}: {}",
+                interface_name, stderr
+            ));
+        }
+
+        println!("✅ Interface {} enabled and started (systemd)", interface_name);
+        return Ok(());
     }
 
-    // Start interface
-    let start_output = Command::new("systemctl")
-        .args(&["start", &format!("wg-quick@{}", interface_name)])
+    // Try OpenRC (Alpine)
+    if Command::new("rc-service")
+        .arg("--version")
         .output()
-        .map_err(|e| format!("Failed to start interface {}: {}", interface_name, e))?;
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        // Create symlink for OpenRC
+        let symlink_path = format!("/etc/init.d/wg-quick.{}", interface_name);
+        if !Path::new(&symlink_path).exists() {
+            let ln_output = Command::new("ln")
+                .args(["-s", "/etc/init.d/wg-quick", &symlink_path])
+                .output();
+            
+            if let Ok(output) = ln_output {
+                if !output.status.success() {
+                    println!("Warning: Failed to create service symlink for {}", interface_name);
+                }
+            }
+        }
 
-    if !start_output.status.success() {
-        let stderr = String::from_utf8_lossy(&start_output.stderr);
-        return Err(format!(
-            "Failed to start interface {}: {}",
-            interface_name, stderr
-        ));
+        // Add to default runlevel
+        let add_output = Command::new("rc-update")
+            .args(["add", &format!("wg-quick.{}", interface_name)])
+            .output()
+            .map_err(|e| format!("Failed to enable interface {}: {}", interface_name, e))?;
+
+        if !add_output.status.success() {
+            println!(
+                "Warning: Failed to add {} to runlevel",
+                interface_name
+            );
+        }
+
+        // Start the service
+        let start_output = Command::new("rc-service")
+            .args([&format!("wg-quick.{}", interface_name), "start"])
+            .output()
+            .map_err(|e| format!("Failed to start interface {}: {}", interface_name, e))?;
+
+        if !start_output.status.success() {
+            let stderr = String::from_utf8_lossy(&start_output.stderr);
+            return Err(format!(
+                "Failed to start interface {}: {}",
+                interface_name, stderr
+            ));
+        }
+
+        println!("✅ Interface {} enabled and started (OpenRC)", interface_name);
+        return Ok(());
     }
 
-    println!("✅ Interface {} enabled and started", interface_name);
-    Ok(())
+    Err("No supported init system found (systemd or OpenRC required)".to_string())
 }
 
 fn disable_interface(interface_name: &str) -> Result<(), String> {
-    // Stop interface
-    let stop_output = Command::new("systemctl")
-        .args(&["stop", &format!("wg-quick@{}", interface_name)])
+    // Try systemd first
+    if Command::new("systemctl")
+        .arg("--version")
         .output()
-        .map_err(|e| format!("Failed to stop interface {}: {}", interface_name, e))?;
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        // Stop interface
+        let stop_output = Command::new("systemctl")
+            .args(&["stop", &format!("wg-quick@{}", interface_name)])
+            .output()
+            .map_err(|e| format!("Failed to stop interface {}: {}", interface_name, e))?;
 
-    if !stop_output.status.success() {
-        let stderr = String::from_utf8_lossy(&stop_output.stderr);
-        println!(
-            "Warning: Failed to stop interface {}: {}",
-            interface_name, stderr
-        );
+        if !stop_output.status.success() {
+            let stderr = String::from_utf8_lossy(&stop_output.stderr);
+            println!(
+                "Warning: Failed to stop interface {}: {}",
+                interface_name, stderr
+            );
+        }
+
+        // Disable interface
+        let disable_output = Command::new("systemctl")
+            .args(&["disable", &format!("wg-quick@{}", interface_name)])
+            .output()
+            .map_err(|e| format!("Failed to disable interface {}: {}", interface_name, e))?;
+
+        if !disable_output.status.success() {
+            let stderr = String::from_utf8_lossy(&disable_output.stderr);
+            println!(
+                "Warning: Failed to disable interface {}: {}",
+                interface_name, stderr
+            );
+        }
+
+        println!("✅ Interface {} disabled (systemd)", interface_name);
+        return Ok(());
     }
 
-    // Disable interface
-    let disable_output = Command::new("systemctl")
-        .args(&["disable", &format!("wg-quick@{}", interface_name)])
+    // Try OpenRC (Alpine)
+    if Command::new("rc-service")
+        .arg("--version")
         .output()
-        .map_err(|e| format!("Failed to disable interface {}: {}", interface_name, e))?;
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        // Stop the service
+        let stop_output = Command::new("rc-service")
+            .args([&format!("wg-quick.{}", interface_name), "stop"])
+            .output()
+            .map_err(|e| format!("Failed to stop interface {}: {}", interface_name, e))?;
 
-    if !disable_output.status.success() {
-        let stderr = String::from_utf8_lossy(&disable_output.stderr);
-        println!(
-            "Warning: Failed to disable interface {}: {}",
-            interface_name, stderr
-        );
+        if !stop_output.status.success() {
+            let stderr = String::from_utf8_lossy(&stop_output.stderr);
+            println!(
+                "Warning: Failed to stop interface {}: {}",
+                interface_name, stderr
+            );
+        }
+
+        // Remove from default runlevel
+        let remove_output = Command::new("rc-update")
+            .args(["del", &format!("wg-quick.{}", interface_name)])
+            .output()
+            .map_err(|e| format!("Failed to disable interface {}: {}", interface_name, e))?;
+
+        if !remove_output.status.success() {
+            println!(
+                "Warning: Failed to remove {} from runlevel",
+                interface_name
+            );
+        }
+
+        // Remove symlink
+        let symlink_path = format!("/etc/init.d/wg-quick.{}", interface_name);
+        if Path::new(&symlink_path).exists() {
+            let _ = fs::remove_file(&symlink_path);
+        }
+
+        println!("✅ Interface {} disabled (OpenRC)", interface_name);
+        return Ok(());
     }
 
+    println!("Warning: No supported init system found");
     Ok(())
 }
 

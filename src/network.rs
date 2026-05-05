@@ -1,5 +1,6 @@
-use crate::models::{InterfaceConfig, MultiInterfaceConfig};
+use crate::models::MultiInterfaceConfig;
 use ipnetwork::{IpNetwork, Ipv4Network};
+use std::path::Path;
 use std::net::Ipv4Addr;
 use std::process::Command;
 
@@ -174,7 +175,8 @@ pub fn suggest_available_port(existing_ports: &[u16], start_port: u16) -> u16 {
         port += 1;
 
         // Safety check to prevent infinite loop
-        if port > 65535 {
+        // port is u16, so it wraps around at 65535
+        if port == 0 {
             port = 1024; // Start from well-known port range end
         }
         if port == start_port {

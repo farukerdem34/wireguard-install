@@ -32,16 +32,6 @@ pub fn clear_terminal() {
     stdout().flush().unwrap();
 }
 
-/// Wait for user to press any key to continue
-pub fn wait_for_key_press() {
-    print!("Press any key to continue...");
-    stdout().flush().unwrap();
-
-    // Read a line from stdin (user presses enter)
-    let mut buffer = String::new();
-    stdin().read_line(&mut buffer).unwrap();
-}
-
 /// Wait for user to press any key with custom message
 pub fn wait_for_key_press_with_message(message: &str) {
     print!("{}", message);

@@ -1,4 +1,6 @@
 use crate::utils::{clear_terminal, wait_for_key_press_with_message};
+use crate::interface::{get_interface_config, select_interface_for_client};
+use crate::models::InterfaceConfig;
 use dialoguer::{Confirm, Input, Select};
 use qrcode::QrCode;
 use qrcode::render::unicode;
@@ -6,7 +8,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::net::Ipv4Addr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// WireGuard server configuration loaded from /etc/wireguard/params
@@ -36,6 +38,54 @@ pub struct ClientConfig {
     pub home_dir: PathBuf,
     pub use_dns: bool,
     pub allowed_ips: String,
+}
+
+fn apply_interface_overrides(
+    mut params: WireguardParams,
+    interface: &InterfaceConfig,
+) -> WireguardParams {
+    params.server_wg_nic = interface.name.clone();
+    params.server_wg_ipv4 = interface.server_ip;
+    params.server_port = interface.port;
+    params.server_priv_key = interface.private_key.clone();
+    params.server_pub_key = interface.public_key.clone();
+    params
+}
+
+fn build_params_from_interface(interface: &InterfaceConfig) -> Result<WireguardParams, String> {
+    let config = crate::interface::load_multi_interface_config()?;
+
+    // Get server_pub_nic with fallback to detection
+    let server_pub_nic = if config.global_settings.server_pub_nic.is_empty() {
+        // Try to detect the public interface
+        crate::interface::get_public_interface().unwrap_or_else(|_| "eth0".to_string())
+    } else {
+        config.global_settings.server_pub_nic.clone()
+    };
+
+    let dns_1 = *config
+        .global_settings
+        .dns_servers
+        .get(0)
+        .ok_or_else(|| "Missing DNS server 1 in global settings".to_string())?;
+    let dns_2 = *config
+        .global_settings
+        .dns_servers
+        .get(1)
+        .ok_or_else(|| "Missing DNS server 2 in global settings".to_string())?;
+
+    Ok(WireguardParams {
+        server_pub_nic,
+        server_wg_nic: interface.name.clone(),
+        server_wg_ipv4: interface.server_ip,
+        server_wg_ipv6: None,
+        server_port: interface.port,
+        server_priv_key: interface.private_key.clone(),
+        server_pub_key: interface.public_key.clone(),
+        client_dns_1: dns_1,
+        client_dns_2: dns_2,
+        allowed_ips: config.global_settings.allowed_ips.clone(),
+    })
 }
 
 /// Validate IPv4 address is in server subnet and not in use
@@ -420,9 +470,22 @@ fn prompt_for_allowed_ips() -> Result<String, String> {
 pub fn new_client() -> Result<(), String> {
     println!("Loading WireGuard server configuration...");
 
-    // Step 1: Load server configuration from /etc/wireguard/params
-    let params = load_wireguard_params()
-        .map_err(|e| format!("Failed to load server configuration: {}", e))?;
+    // Step 1: Select interface
+    let interface_name = select_interface_for_client()?;
+    let interface_config = get_interface_config(&interface_name)?;
+
+    // Step 2: Load base server configuration from /etc/wireguard/params
+    let params = match load_wireguard_params() {
+        Ok(params) => apply_interface_overrides(params, &interface_config),
+        Err(params_error) => {
+            let params = build_params_from_interface(&interface_config)?;
+            println!(
+                "ℹ️  Using interface configuration from {} (params file unavailable: {})",
+                interface_name, params_error
+            );
+            params
+        }
+    };
 
     println!("✓ Server configuration loaded successfully");
 
@@ -528,6 +591,11 @@ pub fn new_client() -> Result<(), String> {
 /// Load WireGuard parameters from /etc/wireguard/params file
 pub fn load_wireguard_params() -> Result<WireguardParams, String> {
     let params_path = "/etc/wireguard/params";
+
+    // Check if file exists
+    if !Path::new(params_path).exists() {
+        return Err("WireGuard params file not found at /etc/wireguard/params. The system may be using multi-interface mode.".to_string());
+    }
 
     // Read the file content
     let content = fs::read_to_string(params_path)
@@ -974,9 +1042,22 @@ fn generate_qr_code(config_path: &PathBuf) -> Result<(), String> {
 /// 3. Displays a numbered list of all clients with enhanced formatting
 /// 4. Exits with code 1 if no clients are found (matching bash behavior)
 pub fn list_clients() -> Result<(), String> {
-    // Step 1: Load WireGuard parameters to get SERVER_WG_NIC
-    let params = load_wireguard_params()
-        .map_err(|e| format!("Failed to load WireGuard configuration: {}", e))?;
+    // Step 1: Select interface
+    let interface_name = select_interface_for_client()?;
+    let interface_config = get_interface_config(&interface_name)?;
+
+    // Step 2: Load WireGuard parameters to get global settings
+    let params = match load_wireguard_params() {
+        Ok(params) => apply_interface_overrides(params, &interface_config),
+        Err(params_error) => {
+            let params = build_params_from_interface(&interface_config)?;
+            println!(
+                "ℹ️  Using interface configuration from {} (params file unavailable: {})",
+                interface_name, params_error
+            );
+            params
+        }
+    };
 
     // Step 2: Read server configuration file
     let config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);
@@ -1111,37 +1192,34 @@ fn remove_client_from_config(config_path: &str, client_name: &str) -> Result<(),
     let content = fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read server config: {}", e))?;
 
-    // Parse and filter out client section
     let mut new_content = String::new();
-    let mut lines = content.lines().peekable();
-    let mut skip_block = false;
+    let mut in_target_client = false;
+    let target_header = format!("### Client {}", client_name);
 
-    while let Some(line) = lines.next() {
-        // Check for target client block start
-        if line == format!("### Client {}", client_name) {
-            skip_block = true;
+    for line in content.lines() {
+        // Check if this line starts a client block
+        if line == target_header {
+            in_target_client = true;
             continue;
         }
 
-        // If we're skipping, check for conditions to stop skipping
-        if skip_block {
-            // Stop skipping if we encounter:
-            // 1. Another client block
-            // 2. A WireGuard [Interface] section (not [Peer] which belongs to clients)
-            // 3. An empty line (traditional separator)
-            if line.starts_with("### Client ")
-                || line.starts_with("[Interface]")
-                || line.trim().is_empty()
-            {
-                skip_block = false;
-                // Fall through to add this line to new_content
-            } else {
-                // Continue skipping lines that belong to the target client
+        // If we're in the target client block, check if we should stop
+        if in_target_client {
+            // Stop skipping if we encounter another client block or [Interface]
+            if line.starts_with("### Client ") || line.starts_with("[Interface]") {
+                in_target_client = false;
+                // Don't add the empty line that might separate clients
+                if !line.trim().is_empty() {
+                    new_content.push_str(line);
+                    new_content.push('\n');
+                }
                 continue;
             }
+            // Skip all lines in the target client block (including empty lines within the block)
+            continue;
         }
 
-        // Keep non-target-client lines
+        // Keep non-target-client lines (including empty lines between clients)
         new_content.push_str(line);
         new_content.push('\n');
     }
@@ -1196,9 +1274,22 @@ fn remove_client_files(client_name: &str, server_wg_nic: &str) -> Result<(), Str
 /// 6. Syncs WireGuard service to apply changes
 /// 7. Provides detailed success/failure feedback
 pub fn revoke_client() -> Result<(), String> {
-    // Step 1: Load WireGuard configuration
-    let params = load_wireguard_params()
-        .map_err(|e| format!("Failed to load WireGuard configuration: {}", e))?;
+    // Step 1: Select interface
+    let interface_name = select_interface_for_client()?;
+    let interface_config = get_interface_config(&interface_name)?;
+
+    // Step 2: Load WireGuard configuration
+    let params = match load_wireguard_params() {
+        Ok(params) => apply_interface_overrides(params, &interface_config),
+        Err(params_error) => {
+            let params = build_params_from_interface(&interface_config)?;
+            println!(
+                "ℹ️  Using interface configuration from {} (params file unavailable: {})",
+                interface_name, params_error
+            );
+            params
+        }
+    };
 
     // Step 2: Get existing clients
     let clients = get_existing_clients(&params)
