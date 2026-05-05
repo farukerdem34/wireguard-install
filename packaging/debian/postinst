@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+USERNAME="wgmanagement"
+SHELL_PATH="/usr/local/bin/wireguard-install"
+
+if ! getent passwd "$USERNAME" >/dev/null 2>&1; then
+    useradd -M -s "$SHELL_PATH" "$USERNAME"
+    PASSWORD=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | dd bs=1 count=24 2>/dev/null)
+    echo "$USERNAME:$PASSWORD" | chpasswd
+    printf '\nwgmanagement user created\n'
+    printf 'username: %s\n' "$USERNAME"
+    printf 'password: %s\n\n' "$PASSWORD"
+fi
+
+exit 0

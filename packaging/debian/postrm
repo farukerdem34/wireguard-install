@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "purge" ]; then
+    if getent passwd wgmanagement >/dev/null 2>&1; then
+        userdel wgmanagement
+    fi
+fi
+
+exit 0
