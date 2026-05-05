@@ -94,6 +94,9 @@ fn show_management_menu() -> Result<(), String> {
                 if let Err(e) = list_interfaces() {
                     println!("Error listing interfaces: {}", e);
                 }
+                println!("\nPress Enter to continue...");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input).ok();
                 clear_terminal();
             }
             5 => {
