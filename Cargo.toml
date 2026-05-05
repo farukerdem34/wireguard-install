@@ -2,6 +2,8 @@
 name = "wireguard-install"
 version = "0.1.0"
 edition = "2024"
+authors = ["WireGuard Install Maintainers <faruk.omer.erdem@proton.me>"]
+description = "WireGuard VPN server installer and management tool"
 
 [lib]
 name = "wireguard_install"
@@ -36,3 +38,15 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[package.metadata.deb]
+maintainer = "WireGuard Install Maintainers <faruk.omer.erdem@proton.me>"
+depends = "$auto"
+section = "net"
+priority = "optional"
+license-file = "LICENSE"
+assets = [
+    ["target/release/wireguard-install", "usr/local/bin/wireguard-install", "755"],
+]
+maintainer-scripts = "packaging/debian"
+extended-description = "A zero-configuration WireGuard VPN server installer and management tool with automated setup and client management."

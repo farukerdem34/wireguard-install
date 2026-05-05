@@ -150,6 +150,20 @@ cargo build --release
 ./target/release/wireguard-install
 ```
 
+### Debian Package (cargo-deb)
+```bash
+# Install cargo-deb if needed
+cargo install cargo-deb
+
+# Build release binary and .deb
+cargo build --release
+cargo deb
+```
+
+The package installs the binary to `/usr/local/bin/wireguard-install`.
+During installation it creates a `wgmanagement` user with no home directory
+and prints a randomly generated password once.
+
 ### Development Build
 ```bash
 # For development/testing
