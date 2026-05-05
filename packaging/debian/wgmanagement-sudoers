@@ -1,0 +1,1 @@
+wgmanagement ALL=(root) NOPASSWD: /usr/local/bin/wireguard-install

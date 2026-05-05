@@ -47,6 +47,8 @@ priority = "optional"
 license-file = "LICENSE"
 assets = [
     ["target/release/wireguard-install", "usr/local/bin/wireguard-install", "755"],
+    ["packaging/debian/wireguard-install-wrapper.sh", "usr/local/bin/wireguard-install-wrapper.sh", "755"],
+    ["packaging/debian/wgmanagement-sudoers", "etc/sudoers.d/wgmanagement-wireguard-install", "440"],
 ]
 maintainer-scripts = "packaging/debian"
 extended-description = "A zero-configuration WireGuard VPN server installer and management tool with automated setup and client management."
