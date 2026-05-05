@@ -240,7 +240,11 @@ fn find_default_route_interface() -> Result<String, String> {
     }
 
     // Try netstat as alternative
-    if let Ok(output) = process::Command::new("netstat").args(["-rn"]).stdout(process::Stdio::piped()).output() {
+    if let Ok(output) = process::Command::new("netstat")
+        .args(["-rn"])
+        .stdout(process::Stdio::piped())
+        .output()
+    {
         if output.status.success() {
             let netstat_output = String::from_utf8_lossy(&output.stdout);
             // Look for default route (0.0.0.0 or 0/0)
@@ -295,7 +299,10 @@ enum FirewallType {
 
 /// Detect which firewall system is running on the server
 fn detect_firewall_system() -> FirewallType {
-    let output = process::Command::new("pgrep").arg("firewalld").stdout(process::Stdio::piped()).output();
+    let output = process::Command::new("pgrep")
+        .arg("firewalld")
+        .stdout(process::Stdio::piped())
+        .output();
 
     match output {
         Ok(output) if output.status.success() => {
@@ -691,7 +698,10 @@ pub fn install_wireguard(os: OsType) {
     }
 
     // Additional verification: try to run wg with --version to ensure it's working
-    let wg_version_check = process::Command::new("wg").arg("--version").stdout(process::Stdio::piped()).output();
+    let wg_version_check = process::Command::new("wg")
+        .arg("--version")
+        .stdout(process::Stdio::piped())
+        .output();
 
     match wg_version_check {
         Ok(output) if output.status.success() => {

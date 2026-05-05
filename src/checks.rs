@@ -1,5 +1,5 @@
+use anyhow::{Context, Result, bail};
 use heim_virt;
-use anyhow::{Result, Context, bail};
 
 pub async fn check_virtualization() -> Result<()> {
     let virtualization = heim_virt::detect()
