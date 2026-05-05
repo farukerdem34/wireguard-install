@@ -1,3 +1,0 @@
-- [ ] Debian package
-    - [ ] Put the release binary to `/usr/local/bin/wireguard-install``
-    - [ ] Create `wgmanagement` user and set `/usr/local/bin/wireguard-install` as login shell
