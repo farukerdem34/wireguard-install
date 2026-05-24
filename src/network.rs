@@ -1,6 +1,5 @@
 use crate::models::MultiInterfaceConfig;
 use ipnetwork::{IpNetwork, Ipv4Network};
-use std::path::Path;
 use std::net::Ipv4Addr;
 use std::process::Command;
 
@@ -86,7 +85,7 @@ pub fn detect_subnet_conflicts(
 pub fn check_system_route_conflicts(network: &Ipv4Network) -> Result<(), String> {
     // Check system routes using 'ip route' command
     let output = Command::new("ip")
-        .args(&["route", "show"])
+        .args(["route", "show"])
         .output()
         .map_err(|e| format!("Failed to check system routes: {}", e))?;
 
@@ -97,14 +96,14 @@ pub fn check_system_route_conflicts(network: &Ipv4Network) -> Result<(), String>
     let routes_output = String::from_utf8_lossy(&output.stdout);
 
     for line in routes_output.lines() {
-        if let Some(route_network) = extract_network_from_route(line) {
-            if network.overlaps(route_network) {
-                return Err(format!(
-                    "Subnet {} conflicts with system route: {}",
-                    network,
-                    line.trim()
-                ));
-            }
+        if let Some(route_network) = extract_network_from_route(line)
+            && network.overlaps(route_network)
+        {
+            return Err(format!(
+                "Subnet {} conflicts with system route: {}",
+                network,
+                line.trim()
+            ));
         }
     }
 
@@ -112,12 +111,8 @@ pub fn check_system_route_conflicts(network: &Ipv4Network) -> Result<(), String>
 }
 
 fn extract_network_from_route(route_line: &str) -> Option<Ipv4Network> {
-    let parts: Vec<&str> = route_line.split_whitespace().collect();
-    if parts.is_empty() {
-        return None;
-    }
-
-    let network_str = parts[0];
+    let mut parts = route_line.split_whitespace();
+    let network_str = parts.next()?;
 
     // Handle different route formats
     if network_str == "default" {
@@ -125,17 +120,15 @@ fn extract_network_from_route(route_line: &str) -> Option<Ipv4Network> {
     }
 
     // Try to parse as CIDR
-    if let Ok(network) = network_str.parse::<IpNetwork>() {
-        if let IpNetwork::V4(ipv4_net) = network {
-            return Some(ipv4_net);
-        }
+    if let Ok(IpNetwork::V4(ipv4_net)) = network_str.parse::<IpNetwork>() {
+        return Some(ipv4_net);
     }
 
     // Try to parse as single IP (add /32)
-    if let Ok(ip) = network_str.parse::<Ipv4Addr>() {
-        if let Ok(network) = format!("{}/32", ip).parse::<Ipv4Network>() {
-            return Some(network);
-        }
+    if let Ok(ip) = network_str.parse::<Ipv4Addr>()
+        && let Ok(network) = format!("{}/32", ip).parse::<Ipv4Network>()
+    {
+        return Some(network);
     }
 
     None
@@ -143,7 +136,7 @@ fn extract_network_from_route(route_line: &str) -> Option<Ipv4Network> {
 
 pub fn is_port_in_use(port: u16) -> bool {
     // Check if UDP port is bound using ss command
-    let output = Command::new("ss").args(&["-ulpn"]).output();
+    let output = Command::new("ss").args(["-ulpn"]).output();
 
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -153,7 +146,7 @@ pub fn is_port_in_use(port: u16) -> bool {
     }
 
     // Fallback to netstat if ss is not available
-    let output = Command::new("netstat").args(&["-ulpn"]).output();
+    let output = Command::new("netstat").args(["-ulpn"]).output();
 
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);

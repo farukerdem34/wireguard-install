@@ -4,7 +4,6 @@ use crate::interface::save_multi_interface_config;
 use crate::models::{GlobalSettings, InstallAnswers, InterfaceConfig, MultiInterfaceConfig};
 use crate::utils::{clear_terminal, set_permissions_recursive};
 use dialoguer::{Confirm, Input, Select};
-use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -225,16 +224,15 @@ fn find_default_route_interface() -> Result<String, String> {
         .args(["-n", "get", "default"])
         .stdout(process::Stdio::piped())
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let route_output = String::from_utf8_lossy(&output.stdout);
-            // Look for "interface: " line in route output
-            for line in route_output.lines() {
-                if line.trim().starts_with("interface:") {
-                    let interface = line.split_whitespace().nth(1).unwrap_or("").trim();
-                    if !interface.is_empty() && interface_exists(interface) {
-                        return Ok(interface.to_string());
-                    }
+        let route_output = String::from_utf8_lossy(&output.stdout);
+        // Look for "interface: " line in route output
+        for line in route_output.lines() {
+            if line.trim().starts_with("interface:") {
+                let interface = line.split_whitespace().nth(1).unwrap_or("").trim();
+                if !interface.is_empty() && interface_exists(interface) {
+                    return Ok(interface.to_string());
                 }
             }
         }
@@ -245,19 +243,18 @@ fn find_default_route_interface() -> Result<String, String> {
         .args(["-rn"])
         .stdout(process::Stdio::piped())
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let netstat_output = String::from_utf8_lossy(&output.stdout);
-            // Look for default route (0.0.0.0 or 0/0)
-            for line in netstat_output.lines() {
-                if line.starts_with("0.0.0.0") || line.starts_with("default") {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 6 {
-                        // Interface is typically the last field in route table
-                        let interface = parts[parts.len() - 1];
-                        if interface_exists(interface) {
-                            return Ok(interface.to_string());
-                        }
+        let netstat_output = String::from_utf8_lossy(&output.stdout);
+        // Look for default route (0.0.0.0 or 0/0)
+        for line in netstat_output.lines() {
+            if line.starts_with("0.0.0.0") || line.starts_with("default") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 6 {
+                    // Interface is typically the last field in route table
+                    let interface = parts[parts.len() - 1];
+                    if interface_exists(interface) {
+                        return Ok(interface.to_string());
                     }
                 }
             }
@@ -592,20 +589,24 @@ fn configure_wireguard_service(os: OsType, server_wg_nic: &str) {
 
 /// Write InstallAnswers to /etc/wireguard/params file in the specified format
 fn write_params_file(answers: &InstallAnswers) -> Result<(), String> {
-    let params_content = format!(
+    let mut params_content = String::with_capacity(256);
+    use std::fmt::Write;
+    write!(
+        &mut params_content,
         "SERVER_PUB_IP={}\nSERVER_PUB_NIC={}\nSERVER_WG_NIC={}\nSERVER_WG_IPV4={}\nSERVER_WG_IPV6={}\nSERVER_PORT={}\nSERVER_PRIV_KEY={}\nSERVER_PUB_KEY={}\nCLIENT_DNS_1={}\nCLIENT_DNS_2={}\nALLOWED_IPS={}",
         answers.server_pub_ip,
         answers.server_public_nic,
         answers.server_wg_nic,
         answers.server_wg_ip,
-        answers.server_pub_ipv6.as_ref().unwrap_or(&"".to_string()),
+        answers.server_pub_ipv6.as_deref().unwrap_or(""),
         answers.server_wg_port,
         answers.server_priv_key,
         answers.server_pub_key,
         answers.client_dns_1,
         answers.client_dns_2,
         answers.allowed_ips
-    );
+    )
+    .map_err(|e| format!("Failed to build params content: {}", e))?;
 
     fs::write("/etc/wireguard/params", params_content)
         .map_err(|e| format!("Failed to write params file: {}", e))?;
@@ -909,10 +910,10 @@ Allowed IPs list for generated clients (leave default to route everything):
         server_pub_ip: server_public_ip
             .parse::<Ipv4Addr>()
             .expect("Failed to parse public IPv4 address"),
-        server_public_nic: server_public_nic,
+        server_public_nic,
         server_pub_ipv6: server_public_ipv6,
         server_wg_ip: server_ip,
-        server_wg_subnet: server_wg_subnet,
+        server_wg_subnet,
         server_wg_nic: server_wg_interface,
         server_wg_port: server_port.parse::<u16>().expect("Failed to parse port"),
         server_priv_key: String::new(), // Will be filled later

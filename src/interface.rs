@@ -80,7 +80,8 @@ pub fn create_new_interface() -> Result<(), String> {
     let server_ip = get_server_ip_from_subnet(&subnet)?;
 
     // Suggest port
-    let existing_ports: Vec<u16> = config.interfaces.values().map(|i| i.port).collect();
+    let mut existing_ports = Vec::with_capacity(config.interfaces.len());
+    existing_ports.extend(config.interfaces.values().map(|i| i.port));
     let suggested_port = suggest_available_port(&existing_ports, config.get_next_suggested_port());
 
     let port_input: String = Input::new()
@@ -113,18 +114,6 @@ pub fn create_new_interface() -> Result<(), String> {
     // Generate keys
     let (private_key, public_key) = generate_keys()?;
 
-    // Create interface config
-    let interface_config = InterfaceConfig {
-        name: interface_name.clone(),
-        subnet: subnet.clone(),
-        server_ip,
-        port,
-        private_key: private_key.clone(),
-        public_key: public_key.clone(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-        active: true,
-    };
-
     // Show summary and confirm
     println!("\\n📋 Interface Summary:");
     println!("  Name: {}", interface_name);
@@ -142,6 +131,17 @@ pub fn create_new_interface() -> Result<(), String> {
     if !confirm {
         return Ok(());
     }
+
+    let interface_config = InterfaceConfig {
+        name: interface_name.clone(),
+        subnet,
+        server_ip,
+        port,
+        private_key,
+        public_key,
+        created_at: chrono::Utc::now().to_rfc3339(),
+        active: true,
+    };
 
     // Create WireGuard configuration file
     create_interface_config_file(&interface_config)?;
@@ -199,7 +199,8 @@ pub fn remove_interface() -> Result<(), String> {
         return Err("No interfaces configured to remove".to_string());
     }
 
-    let interface_names: Vec<String> = config.interfaces.keys().cloned().collect();
+    let mut interface_names = Vec::with_capacity(config.interfaces.len());
+    interface_names.extend(config.interfaces.keys().cloned());
 
     let selection = Select::new()
         .with_prompt("Select interface to remove")
@@ -255,7 +256,7 @@ pub fn remove_interface() -> Result<(), String> {
 fn generate_keys() -> Result<(String, String), String> {
     // Generate private key
     let private_key_output = Command::new("wg")
-        .args(&["genkey"])
+        .args(["genkey"])
         .output()
         .map_err(|e| format!("Failed to generate private key: {}", e))?;
 
@@ -304,7 +305,10 @@ fn create_interface_config_file(interface: &InterfaceConfig) -> Result<(), Strin
     let prefix = extract_prefix_from_subnet(&interface.subnet)?;
     let public_interface = get_public_interface()?;
     
-    let config_content = format!(
+    let mut config_content = String::with_capacity(512);
+    use std::fmt::Write;
+    write!(
+        &mut config_content,
         "[Interface]\nPrivateKey = {}\nAddress = {}/{}\nListenPort = {}\nPostUp = iptables -A FORWARD -i {} -j ACCEPT; iptables -A FORWARD -o {} -j ACCEPT; iptables -t nat -A POSTROUTING -o {} -j MASQUERADE\nPostDown = iptables -D FORWARD -i {} -j ACCEPT; iptables -D FORWARD -o {} -j ACCEPT; iptables -t nat -D POSTROUTING -o {} -j MASQUERADE\n",
         interface.private_key,
         interface.server_ip,
@@ -316,7 +320,8 @@ fn create_interface_config_file(interface: &InterfaceConfig) -> Result<(), Strin
         interface.name,
         interface.name,
         public_interface
-    );
+    )
+    .map_err(|e| format!("Failed to build interface config: {}", e))?;
 
     let config_path = format!("/etc/wireguard/{}.conf", interface.name);
     fs::write(&config_path, config_content)
@@ -331,31 +336,28 @@ fn create_interface_config_file(interface: &InterfaceConfig) -> Result<(), Strin
 }
 
 fn extract_prefix_from_subnet(subnet: &str) -> Result<u8, String> {
-    let parts: Vec<&str> = subnet.split('/').collect();
-    if parts.len() != 2 {
-        return Err(format!("Invalid subnet format: {}", subnet));
-    }
+    let (_, prefix) = subnet
+        .split_once('/')
+        .ok_or_else(|| format!("Invalid subnet format: {}", subnet))?;
 
-    parts[1]
+    prefix
         .parse::<u8>()
-        .map_err(|_| format!("Invalid subnet prefix: {}", parts[1]))
+        .map_err(|_| format!("Invalid subnet prefix: {}", prefix))
 }
 
 pub fn get_public_interface() -> Result<String, String> {
     // Try to detect the public interface using default route
     let output = Command::new("ip")
-        .args(&["route", "show", "default"])
+        .args(["route", "show", "default"])
         .output()
         .map_err(|e| format!("Failed to detect public interface: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     for line in stdout.lines() {
-        if line.contains("dev") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(dev_index) = parts.iter().position(|&x| x == "dev") {
-                if let Some(interface) = parts.get(dev_index + 1) {
-                    return Ok(interface.to_string());
-                }
+        let mut parts = line.split_whitespace();
+        while let Some(part) = parts.next() {
+            if part == "dev" && let Some(interface) = parts.next() {
+                return Ok(interface.to_string());
             }
         }
     }
@@ -363,13 +365,13 @@ pub fn get_public_interface() -> Result<String, String> {
     // Fallback to common interface names
     for interface in &["eth0", "ens3", "enp0s3", "wlan0"] {
         let check_output = Command::new("ip")
-            .args(&["link", "show", interface])
+            .args(["link", "show", interface])
             .output();
 
-        if let Ok(output) = check_output {
-            if output.status.success() {
-                return Ok(interface.to_string());
-            }
+        if let Ok(output) = check_output
+            && output.status.success()
+        {
+            return Ok(interface.to_string());
         }
     }
 
@@ -386,7 +388,7 @@ fn enable_interface(interface_name: &str) -> Result<(), String> {
     {
         // Enable interface with systemd
         let enable_output = Command::new("systemctl")
-            .args(&["enable", &format!("wg-quick@{}", interface_name)])
+            .args(["enable", &format!("wg-quick@{}", interface_name)])
             .output()
             .map_err(|e| format!("Failed to enable interface {}: {}", interface_name, e))?;
 
@@ -400,7 +402,7 @@ fn enable_interface(interface_name: &str) -> Result<(), String> {
 
         // Start interface with systemd
         let start_output = Command::new("systemctl")
-            .args(&["start", &format!("wg-quick@{}", interface_name)])
+            .args(["start", &format!("wg-quick@{}", interface_name)])
             .output()
             .map_err(|e| format!("Failed to start interface {}: {}", interface_name, e))?;
 
@@ -430,10 +432,10 @@ fn enable_interface(interface_name: &str) -> Result<(), String> {
                 .args(["-s", "/etc/init.d/wg-quick", &symlink_path])
                 .output();
             
-            if let Ok(output) = ln_output {
-                if !output.status.success() {
-                    println!("Warning: Failed to create service symlink for {}", interface_name);
-                }
+            if let Ok(output) = ln_output
+                && !output.status.success()
+            {
+                println!("Warning: Failed to create service symlink for {}", interface_name);
             }
         }
 
@@ -481,7 +483,7 @@ fn disable_interface(interface_name: &str) -> Result<(), String> {
     {
         // Stop interface
         let stop_output = Command::new("systemctl")
-            .args(&["stop", &format!("wg-quick@{}", interface_name)])
+            .args(["stop", &format!("wg-quick@{}", interface_name)])
             .output()
             .map_err(|e| format!("Failed to stop interface {}: {}", interface_name, e))?;
 
@@ -495,7 +497,7 @@ fn disable_interface(interface_name: &str) -> Result<(), String> {
 
         // Disable interface
         let disable_output = Command::new("systemctl")
-            .args(&["disable", &format!("wg-quick@{}", interface_name)])
+            .args(["disable", &format!("wg-quick@{}", interface_name)])
             .output()
             .map_err(|e| format!("Failed to disable interface {}: {}", interface_name, e))?;
 
@@ -580,8 +582,8 @@ pub fn select_interface_for_client() -> Result<String, String> {
         return Err("No interfaces configured. Please create an interface first.".to_string());
     }
 
-    let mut interface_options = Vec::new();
-    let mut interface_names = Vec::new();
+    let mut interface_options = Vec::with_capacity(config.interfaces.len());
+    let mut interface_names = Vec::with_capacity(config.interfaces.len());
 
     for (name, interface) in &config.interfaces {
         if interface.active {

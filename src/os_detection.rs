@@ -1,6 +1,5 @@
 use crate::enums::OsType;
 use crate::models::VersionInfo;
-use dotenv;
 
 pub fn get_os() -> OsType {
     let (os_type, _) = get_os_with_version();

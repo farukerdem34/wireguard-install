@@ -14,6 +14,7 @@ use std::process::Command;
 /// WireGuard server configuration loaded from /etc/wireguard/params
 #[derive(Debug, Clone)]
 pub struct WireguardParams {
+    #[allow(dead_code)]
     pub server_pub_nic: String,
     pub server_wg_nic: String,
     pub server_wg_ipv4: Ipv4Addr,
@@ -23,6 +24,7 @@ pub struct WireguardParams {
     pub server_pub_key: String,
     pub client_dns_1: Ipv4Addr,
     pub client_dns_2: Ipv4Addr,
+    #[allow(dead_code)]
     pub allowed_ips: String,
 }
 
@@ -44,11 +46,11 @@ fn apply_interface_overrides(
     mut params: WireguardParams,
     interface: &InterfaceConfig,
 ) -> WireguardParams {
-    params.server_wg_nic = interface.name.clone();
+    params.server_wg_nic.clone_from(&interface.name);
     params.server_wg_ipv4 = interface.server_ip;
     params.server_port = interface.port;
-    params.server_priv_key = interface.private_key.clone();
-    params.server_pub_key = interface.public_key.clone();
+    params.server_priv_key.clone_from(&interface.private_key);
+    params.server_pub_key.clone_from(&interface.public_key);
     params
 }
 
@@ -66,7 +68,7 @@ fn build_params_from_interface(interface: &InterfaceConfig) -> Result<WireguardP
     let dns_1 = *config
         .global_settings
         .dns_servers
-        .get(0)
+        .first()
         .ok_or_else(|| "Missing DNS server 1 in global settings".to_string())?;
     let dns_2 = *config
         .global_settings
@@ -189,16 +191,16 @@ fn prompt_for_client_ipv4(server_ipv4: &Ipv4Addr, server_wg_nic: &str) -> Result
     let octets = server_ipv4.octets();
     let subnet = format!("{}.{}.{}", octets[0], octets[1], octets[2]);
 
-    println!("");
+    println!();
     println!("IPv4 Address Configuration");
-    println!("");
+    println!();
     println!("Server subnet: {}.x", subnet);
     println!("Suggested next available IP address: {}", suggested_ip);
 
     loop {
         let choice = Select::new()
             .with_prompt("Choose IPv4 address option")
-            .items(&[
+            .items([
                 "Use suggested IP address (recommended)",
                 "Enter custom IP address",
             ])
@@ -215,7 +217,7 @@ fn prompt_for_client_ipv4(server_ipv4: &Ipv4Addr, server_wg_nic: &str) -> Result
             1 => {
                 // Custom IP input
                 let custom_ip: String = Input::new()
-                    .with_prompt(&format!(
+                    .with_prompt(format!(
                         "Enter custom IPv4 address (must be in {}.x)",
                         subnet
                     ))
@@ -228,10 +230,10 @@ fn prompt_for_client_ipv4(server_ipv4: &Ipv4Addr, server_wg_nic: &str) -> Result
                         return Ok(ip);
                     }
                     Err(e) => {
-                        println!("");
+                        println!();
                         println!("❌ {}", e);
                         println!("Please try again.");
-                        println!("");
+                        println!();
                         continue;
                     }
                 }
@@ -263,9 +265,9 @@ fn prompt_for_client_ipv6(
         "invalid"
     };
 
-    println!("");
+    println!();
     println!("IPv6 Address Configuration");
-    println!("");
+    println!();
     println!("Server IPv6 subnet: {}::x", subnet_prefix);
 
     if let Some(suggested) = &suggested_ipv6 {
@@ -273,7 +275,7 @@ fn prompt_for_client_ipv6(
 
         let choice = Select::new()
             .with_prompt("Choose IPv6 address option")
-            .items(&[
+            .items([
                 "Use suggested IPv6 address (recommended)",
                 "Enter custom IPv6 address",
                 "Skip IPv6 configuration",
@@ -292,7 +294,7 @@ fn prompt_for_client_ipv6(
                 // Custom IPv6 input
                 loop {
                     let custom_ipv6: String = Input::new()
-                        .with_prompt(&format!(
+                        .with_prompt(format!(
                             "Enter custom IPv6 address (must be in {}::x)",
                             subnet_prefix
                         ))
@@ -305,10 +307,10 @@ fn prompt_for_client_ipv6(
                             return Ok(Some(ip));
                         }
                         Err(e) => {
-                            println!("");
+                            println!();
                             println!("❌ {}", e);
                             println!("Please try again.");
-                            println!("");
+                            println!();
                             // Continue loop
                         }
                     }
@@ -326,7 +328,7 @@ fn prompt_for_client_ipv6(
 
         let choice = Select::new()
             .with_prompt("Choose IPv6 option")
-            .items(&["Enter custom IPv6 address", "Skip IPv6 configuration"])
+            .items(["Enter custom IPv6 address", "Skip IPv6 configuration"])
             .default(1)
             .interact()
             .map_err(|e| format!("Selection error: {}", e))?;
@@ -336,7 +338,7 @@ fn prompt_for_client_ipv6(
                 // Custom IPv6 input
                 loop {
                     let custom_ipv6: String = Input::new()
-                        .with_prompt(&format!(
+                        .with_prompt(format!(
                             "Enter custom IPv6 address (must be in {}::x)",
                             subnet_prefix
                         ))
@@ -349,10 +351,10 @@ fn prompt_for_client_ipv6(
                             return Ok(Some(ip));
                         }
                         Err(e) => {
-                            println!("");
+                            println!();
                             println!("❌ {}", e);
                             println!("Please try again.");
-                            println!("");
+                            println!();
                             // Continue loop
                         }
                     }
@@ -370,9 +372,9 @@ fn prompt_for_client_ipv6(
 
 /// Prompt user whether to include DNS configuration
 fn prompt_for_dns_usage() -> Result<bool, String> {
-    println!("");
+    println!();
     println!("DNS Configuration");
-    println!("");
+    println!();
     println!("Do you want to include DNS settings in the client configuration?");
     println!("This will automatically route DNS queries through the VPN.");
 
@@ -393,9 +395,9 @@ fn prompt_for_dns_usage() -> Result<bool, String> {
 
 /// Prompt user for allowed IP addresses with validation
 fn prompt_for_allowed_ips() -> Result<String, String> {
-    println!("");
+    println!();
     println!("Allowed IP Configuration");
-    println!("");
+    println!();
     println!("Specify which traffic should be routed through the VPN.");
     println!("Examples:");
     println!("  • 0.0.0.0/0 - Route all traffic through VPN (full tunnel)");
@@ -405,7 +407,7 @@ fn prompt_for_allowed_ips() -> Result<String, String> {
 
     let choice = Select::new()
         .with_prompt("Choose allowed IP configuration")
-        .items(&[
+        .items([
             "Route all traffic (0.0.0.0/0) - Recommended for full VPN",
             "Enter custom allowed IPs",
         ])
@@ -431,10 +433,10 @@ fn prompt_for_allowed_ips() -> Result<String, String> {
                 let custom_ips = custom_ips.trim();
 
                 if custom_ips.is_empty() {
-                    println!("");
+                    println!();
                     println!("❌ Allowed IPs cannot be empty");
                     println!("Please try again.");
-                    println!("");
+                    println!();
                     continue;
                 }
 
@@ -448,12 +450,12 @@ fn prompt_for_allowed_ips() -> Result<String, String> {
                 });
 
                 if !is_valid {
-                    println!("");
+                    println!();
                     println!(
                         "❌ Invalid IP format. Please use CIDR notation (e.g., 192.168.1.0/24)"
                     );
                     println!("Please try again.");
-                    println!("");
+                    println!();
                     continue;
                 }
 
@@ -490,9 +492,9 @@ pub fn new_client() -> Result<(), String> {
     println!("✓ Server configuration loaded successfully");
 
     // Step 2: Interactive client creation
-    println!("");
+    println!();
     println!("Client configuration");
-    println!("");
+    println!();
     println!(
         "The client name must consist of alphanumeric character(s). It may also include underscores or dashes and can't exceed 15 chars."
     );
@@ -558,11 +560,11 @@ pub fn new_client() -> Result<(), String> {
     ));
 
     // Display configuration information
-    println!("");
+    println!();
     println!("✅ Client '{}' created successfully!", client_config.name);
-    println!("");
+    println!();
     println!("📁 Configuration file saved to: {}", config_path.display());
-    println!("");
+    println!();
 
     // Show configuration content
     if let Ok(config_content) = fs::read_to_string(&config_path) {
@@ -570,7 +572,7 @@ pub fn new_client() -> Result<(), String> {
         println!("─────────────────────────");
         println!("{}", config_content);
         println!("─────────────────────────");
-        println!("");
+        println!();
     }
 
     // Generate and display QR code
@@ -579,7 +581,7 @@ pub fn new_client() -> Result<(), String> {
     }
 
     // Wait for user acknowledgment before clearing
-    println!("");
+    println!();
     wait_for_key_press_with_message("Press any key to continue and return to the main menu...");
 
     // Clear terminal after user presses a key
@@ -643,7 +645,7 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
 
 /// Parse shell variable format (KEY=VALUE and KEY=${VAR})
 fn parse_shell_vars(content: &str) -> Result<HashMap<String, String>, String> {
-    let mut vars = HashMap::new();
+    let mut vars = HashMap::with_capacity(content.lines().count());
 
     for (line_num, line) in content.lines().enumerate() {
         let line = line.trim();
@@ -678,8 +680,8 @@ fn parse_shell_vars(content: &str) -> Result<HashMap<String, String>, String> {
 /// Get a required variable from the parsed vars map
 fn get_required_var(vars: &HashMap<String, String>, key: &str) -> Result<String, String> {
     vars.get(key)
+        .cloned()
         .ok_or_else(|| format!("Missing required parameter: {}", key))
-        .map(|v| v.clone())
 }
 
 /// Get an optional variable from the parsed vars map
@@ -717,19 +719,19 @@ fn prompt_and_validate_client_name(server_wg_nic: &str) -> Result<String, String
 
         // Validate name format
         if !name_regex.is_match(&client_name) {
-            println!("");
+            println!();
             println!(
                 "Invalid characters in client name. Use only alphanumeric characters, underscores, or dashes."
             );
-            println!("");
+            println!();
             continue;
         }
 
         // Validate name length
         if client_name.len() >= 16 {
-            println!("");
+            println!();
             println!("Client name must be less than 16 characters.");
-            println!("");
+            println!();
             continue;
         }
 
@@ -738,11 +740,11 @@ fn prompt_and_validate_client_name(server_wg_nic: &str) -> Result<String, String
         if let Ok(content) = fs::read_to_string(&config_path) {
             let search_pattern = format!("### Client {}", client_name);
             if content.contains(&search_pattern) {
-                println!("");
+                println!();
                 println!(
                     "A client with the specified name was already created, please choose another name."
                 );
-                println!("");
+                println!();
                 continue;
             }
         }
@@ -983,7 +985,7 @@ fn sync_wireguard_config(interface: &str) -> Result<(), String> {
     let output = Command::new("wg")
         .arg("syncconf")
         .arg(interface)
-        .arg(format!("/dev/stdin"))
+        .arg("/dev/stdin")
         .stdin(std::process::Stdio::piped())
         .spawn()
         .and_then(|mut child| {
@@ -992,7 +994,7 @@ fn sync_wireguard_config(interface: &str) -> Result<(), String> {
                 .arg("strip")
                 .arg(interface)
                 .output()
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
 
             if let Some(stdin) = child.stdin.as_mut() {
                 use std::io::Write;
@@ -1024,11 +1026,11 @@ fn generate_qr_code(config_path: &PathBuf) -> Result<(), String> {
         .light_color(unicode::Dense1x2::Dark)
         .build();
 
-    println!("");
+    println!();
     println!("Here is your client config file as a QR Code:");
-    println!("");
+    println!();
     println!("{}", image);
-    println!("");
+    println!();
 
     Ok(())
 }
@@ -1173,7 +1175,7 @@ fn confirm_revocation(client_name: &str) -> Result<bool, String> {
     );
 
     let confirmed = Confirm::new()
-        .with_prompt(&format!(
+        .with_prompt(format!(
             "Are you sure you want to revoke '{}'?",
             client_name
         ))
@@ -1327,8 +1329,8 @@ pub fn revoke_client() -> Result<(), String> {
     }
 
     // Step 7: Best effort cleanup - collect errors but continue
-    let mut errors = Vec::new();
-    let mut successes = Vec::new();
+    let mut errors = Vec::with_capacity(3);
+    let mut successes = Vec::with_capacity(3);
 
     // Remove from server config
     let server_config_path = format!("/etc/wireguard/{}.conf", params.server_wg_nic);

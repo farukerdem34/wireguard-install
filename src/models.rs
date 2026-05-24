@@ -25,12 +25,12 @@ pub struct VersionInfo {
 
 impl VersionInfo {
     pub fn new(version_string: &str) -> Self {
-        let parts: Vec<&str> = version_string.split('.').collect();
+        let mut parts = version_string.split('.');
         let major_version = parts
-            .get(0)
+            .next()
             .and_then(|v| v.parse::<u32>().ok())
             .unwrap_or(0);
-        let minor_version = parts.get(1).and_then(|v| v.parse::<u32>().ok());
+        let minor_version = parts.next().and_then(|v| v.parse::<u32>().ok());
 
         VersionInfo {
             major_version,
@@ -46,6 +46,12 @@ pub struct MultiInterfaceConfig {
     pub interfaces: HashMap<String, InterfaceConfig>,
     pub global_settings: GlobalSettings,
     pub next_suggested_port: u16,
+}
+
+impl Default for MultiInterfaceConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

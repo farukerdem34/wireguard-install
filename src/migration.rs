@@ -137,7 +137,7 @@ fn get_param(params: &HashMap<String, String>, key: &str) -> Result<String, Stri
     params
         .get(key)
         .ok_or_else(|| format!("Missing required parameter: {}", key))
-        .map(|s| s.clone())
+        .cloned()
 }
 
 fn parse_ip(params: &HashMap<String, String>, key: &str) -> Result<Ipv4Addr, String> {
