@@ -12,6 +12,7 @@ use std::process::Command;
 /// WireGuard server configuration loaded from /etc/wireguard/params
 #[derive(Debug, Clone)]
 pub struct WireguardParams {
+    pub server_pub_ip: Ipv4Addr,
     pub server_pub_nic: String,
     pub server_wg_nic: String,
     pub server_wg_ipv4: Ipv4Addr,
@@ -552,6 +553,9 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
 
     // Convert to structured config with validation
     Ok(WireguardParams {
+        server_pub_ip: get_required_var(&vars, "SERVER_PUB_IP")?
+            .parse::<Ipv4Addr>()
+            .map_err(|e| format!("Invalid SERVER_PUB_IP: {}", e))?,
         server_pub_nic: get_required_var(&vars, "SERVER_PUB_NIC")?,
         server_wg_nic: get_required_var(&vars, "SERVER_WG_NIC")?,
         server_wg_ipv4: get_required_var(&vars, "SERVER_WG_IPV4")?
@@ -823,8 +827,7 @@ fn create_client_config_file(
     params: &WireguardParams,
 ) -> Result<(), String> {
     // Use server's public IP for endpoint, format properly for IPv6
-    let server_pub_ip =
-        std::env::var("SERVER_PUB_IP").unwrap_or_else(|_| params.server_wg_ipv4.to_string());
+    let server_pub_ip = params.server_pub_ip.to_string();
     let endpoint = format_endpoint(&server_pub_ip, params.server_port);
 
     // Build address line - conditionally include IPv6
