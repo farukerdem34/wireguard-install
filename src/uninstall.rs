@@ -286,11 +286,6 @@ fn remove_packages(os_type: &OsType, version_info: &VersionInfo) -> Result<(), S
                 let _ = fs::remove_dir_all(qr_dir);
             }
 
-            // Remove qrencode build artifacts
-            let _ = Command::new("sh")
-                .args(["-c", "rm -rf qrencode-*"])
-                .output();
-
             // Remove Alpine packages
             Command::new("apk")
                 .args(["del", "wireguard-tools", "libqrencode", "libqrencode-tools"])
