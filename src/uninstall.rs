@@ -118,13 +118,16 @@ fn backup_configuration(_config: &WireguardParams) -> Result<(), String> {
 
     println!("📦 Creating backup at: {}", backup_dir);
 
-    // Create backup directory
+    // Create backup directory with restrictive permissions (contains secrets)
     fs::create_dir_all(&backup_dir)
         .map_err(|e| format!("Failed to create backup directory: {}", e))?;
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&backup_dir, fs::Permissions::from_mode(0o700))
+        .map_err(|e| format!("Failed to secure backup directory: {}", e))?;
 
-    // Copy /etc/wireguard to backup location
+    // Copy /etc/wireguard to backup location, preserving modes
     let output = Command::new("cp")
-        .args(["-r", "/etc/wireguard", &backup_dir])
+        .args(["-a", "/etc/wireguard", &backup_dir])
         .output()
         .map_err(|e| format!("Failed to execute backup command: {}", e))?;
 
