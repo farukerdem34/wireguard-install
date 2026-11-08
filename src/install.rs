@@ -219,7 +219,29 @@ fn interface_exists(name: &str) -> bool {
 
 /// Find the default route interface using system commands
 fn find_default_route_interface() -> Result<String, String> {
-    // Try route command first (more widely available)
+    // Try ip command first (standard on modern Linux)
+    if let Ok(output) = process::Command::new("ip")
+        .args(["-4", "route", "show", "default"])
+        .stdout(process::Stdio::piped())
+        .output()
+    {
+        if output.status.success() {
+            let ip_output = String::from_utf8_lossy(&output.stdout);
+            for line in ip_output.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                for i in 0..parts.len().saturating_sub(1) {
+                    if parts[i] == "dev" {
+                        let interface = parts[i + 1];
+                        if interface_exists(interface) {
+                            return Ok(interface.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Try route command (more widely available on older systems)
     if let Ok(output) = process::Command::new("route")
         .args(["-n", "get", "default"])
         .stdout(process::Stdio::piped())
