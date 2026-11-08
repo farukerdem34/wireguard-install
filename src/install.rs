@@ -647,7 +647,7 @@ pub fn install_wireguard(os: OsType) {
                 vec![
                     "yum install -y epel-release elrepo-release",
                     "yum install -y kmod-wireguard",
-                    "qrencode",
+                    "yum install -y qrencode",
                 ]
             } else {
                 vec!["yum install -y wireguard-tools iptables"]
