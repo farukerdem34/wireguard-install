@@ -185,9 +185,6 @@ fn disable_wireguard_service(interface: &str, os_type: &OsType) -> Result<(), St
                 .output()
                 .map_err(|e| format!("Failed to execute unlink: {}", e));
 
-            // Remove sysctl from boot (if it was added)
-            let _ = Command::new("rc-update").args(["del", "sysctl"]).output();
-
             del_output
         }
         _ => Command::new("systemctl")
