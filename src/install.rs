@@ -635,6 +635,7 @@ pub fn install_wireguard(os: OsType) {
                     "dnf install -y dnf-plugins-core",
                     "dnf copr enable -y jdoss/wireguard",
                     "dnf install -y wireguard-dkms",
+                    "dnf install -y wireguard-tools iptables qrencode",
                 ]
             } else {
                 vec!["dnf install -y wireguard-tools iptables qrencode"]
