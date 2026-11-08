@@ -826,6 +826,11 @@ You can keep the default options and just press enter if you are ok with them.
     let server_public_ip: String = Input::new()
         .with_prompt("IPv4 public address: ")
         .default(predicted_server_public_ip)
+        .validate_with(|ip: &String| {
+            ip.parse::<Ipv4Addr>()
+                .map(|_| ())
+                .map_err(|_| "Invalid IPv4 address")
+        })
         .interact_text()
         .unwrap();
     let want_ipv6: bool = Confirm::new()
@@ -867,6 +872,11 @@ You can keep the default options and just press enter if you are ok with them.
     let server_port: String = Input::new()
         .with_prompt("Server port: ")
         .default("51820".to_string())
+        .validate_with(|p: &String| {
+            p.parse::<u16>()
+                .map(|_| ())
+                .map_err(|_| "Invalid port number")
+        })
         .interact_text()
         .unwrap();
     let client_dns_1: String = Input::new()
