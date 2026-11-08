@@ -347,6 +347,46 @@ fn prompt_for_dns_usage() -> Result<bool, String> {
     Ok(use_dns)
 }
 
+/// Validate a single allowed-IP entry (IPv4/IPv6, optional CIDR prefix)
+fn is_valid_allowed_ip(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    let mut parts = s.split('/');
+    let ip = match parts.next() {
+        Some(v) if !v.is_empty() => v,
+        _ => return false,
+    };
+    let prefix = parts.next();
+    if parts.next().is_some() {
+        return false;
+    }
+    let is_v6 = ip.contains(':');
+    let ip_ok = if is_v6 {
+        ip.parse::<std::net::Ipv6Addr>().is_ok()
+    } else {
+        ip.parse::<std::net::Ipv4Addr>().is_ok()
+    };
+    if !ip_ok {
+        return false;
+    }
+    if let Some(p) = prefix {
+        if p.is_empty() {
+            return false;
+        }
+        let n: u8 = match p.parse() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let max = if is_v6 { 128 } else { 32 };
+        if n > max {
+            return false;
+        }
+    }
+    true
+}
+
 /// Prompt user for allowed IP addresses with validation
 fn prompt_for_allowed_ips() -> Result<String, String> {
     println!("");
@@ -394,14 +434,8 @@ fn prompt_for_allowed_ips() -> Result<String, String> {
                     continue;
                 }
 
-                // Basic validation: check for valid CIDR-like format
-                let is_valid = custom_ips.split(',').all(|ip| {
-                    let ip = ip.trim();
-                    // Simple regex check for CIDR format (x.x.x.x/y or x.x.x.x)
-                    ip.chars().all(|c| c.is_ascii_digit() || c == '.' || c == '/' || c == ':')
-                        && (ip.contains('.') || ip.contains(':')) // IPv4 or IPv6
-                        && !ip.starts_with('/') && !ip.ends_with('/')
-                });
+                // Validate each entry as a real IP (with optional CIDR prefix)
+                let is_valid = custom_ips.split(',').all(is_valid_allowed_ip);
 
                 if !is_valid {
                     println!("");
