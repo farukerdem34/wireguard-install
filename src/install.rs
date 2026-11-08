@@ -6,7 +6,7 @@ use dialoguer::{Confirm, Input, Select};
 use netwatcher;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::{Write, stdout};
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::process;
