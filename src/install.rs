@@ -380,7 +380,17 @@ PrivateKey = {}
     );
 
     // Write the interface configuration
-    fs::write(&config_path, interface_config)
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut config_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&config_path)
+        .expect("Failed to open WireGuard interface configuration");
+    use std::io::Write;
+    config_file
+        .write_all(interface_config.as_bytes())
         .expect("Failed to write WireGuard interface configuration");
 
     // Detect firewall system and generate appropriate rules
@@ -606,7 +616,17 @@ fn write_params_file(answers: &InstallAnswers) -> Result<(), String> {
         answers.allowed_ips
     );
 
-    fs::write("/etc/wireguard/params", params_content)
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut params_file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open("/etc/wireguard/params")
+        .map_err(|e| format!("Failed to write params file: {}", e))?;
+    use std::io::Write;
+    params_file
+        .write_all(params_content.as_bytes())
         .map_err(|e| format!("Failed to write params file: {}", e))?;
 
     // Set secure permissions (600) on the params file since it contains private keys

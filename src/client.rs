@@ -871,7 +871,16 @@ fn create_client_config_file(
         params.server_wg_nic, client.name
     ));
 
-    fs::write(&config_path, config_content)
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&config_path)
+        .map_err(|e| format!("Failed to write client config: {}", e))?;
+    use std::io::Write;
+    file.write_all(config_content.as_bytes())
         .map_err(|e| format!("Failed to write client config: {}", e))?;
 
     Ok(())
