@@ -9,7 +9,10 @@ use std::io;
 use std::path::Path;
 
 pub async fn initial_check() -> io::Result<()> {
-    let _ = check_virtualization().await;
+    if let Err(e) = check_virtualization().await {
+        eprintln!("Error: {}", e);
+        return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+    }
     if let Err(e) = is_root() {
         eprintln!("Error: {}", e);
         return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, e.to_string()));
