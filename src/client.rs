@@ -1021,7 +1021,7 @@ pub fn list_clients() -> Result<(), String> {
     if clients.is_empty() {
         println!();
         println!("You have no existing clients!");
-        std::process::exit(1);
+        return Ok(());
     }
 
     // Step 5: Display enhanced client list
@@ -1220,7 +1220,7 @@ pub fn revoke_client() -> Result<(), String> {
     if clients.is_empty() {
         println!();
         println!("You have no existing clients!");
-        std::process::exit(1);
+        return Ok(());
     }
 
     // Step 4: Display header
