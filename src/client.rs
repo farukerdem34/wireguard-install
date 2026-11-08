@@ -5,7 +5,7 @@ use qrcode::render::unicode;
 use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -91,6 +91,11 @@ fn validate_ipv6_address(
     server_ipv6: &str,
     server_wg_nic: &str,
 ) -> Result<String, String> {
+    // Validate that the address parses as a real IPv6 address
+    if ip.parse::<Ipv6Addr>().is_err() {
+        return Err("Invalid IPv6 address format".to_string());
+    }
+
     // Basic IPv6 format validation (simplified)
     if !ip.contains("::") {
         return Err("Invalid IPv6 address format (must contain '::')".to_string());
