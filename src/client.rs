@@ -13,16 +13,13 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct WireguardParams {
     pub server_pub_ip: Ipv4Addr,
-    pub server_pub_nic: String,
     pub server_wg_nic: String,
     pub server_wg_ipv4: Ipv4Addr,
     pub server_wg_ipv6: Option<String>,
     pub server_port: u16,
-    pub server_priv_key: String,
     pub server_pub_key: String,
     pub client_dns_1: Ipv4Addr,
     pub client_dns_2: Ipv4Addr,
-    pub allowed_ips: String,
 }
 
 /// Client configuration structure
@@ -595,7 +592,6 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
         server_pub_ip: get_required_var(&vars, "SERVER_PUB_IP")?
             .parse::<Ipv4Addr>()
             .map_err(|e| format!("Invalid SERVER_PUB_IP: {}", e))?,
-        server_pub_nic: get_required_var(&vars, "SERVER_PUB_NIC")?,
         server_wg_nic: get_required_var(&vars, "SERVER_WG_NIC")?,
         server_wg_ipv4: get_required_var(&vars, "SERVER_WG_IPV4")?
             .parse::<Ipv4Addr>()
@@ -604,7 +600,6 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
         server_port: get_required_var(&vars, "SERVER_PORT")?
             .parse::<u16>()
             .map_err(|e| format!("Invalid SERVER_PORT: {}", e))?,
-        server_priv_key: get_required_var(&vars, "SERVER_PRIV_KEY")?,
         server_pub_key: get_required_var(&vars, "SERVER_PUB_KEY")?,
         client_dns_1: get_required_var(&vars, "CLIENT_DNS_1")?
             .parse::<Ipv4Addr>()
@@ -612,7 +607,6 @@ pub fn load_wireguard_params() -> Result<WireguardParams, String> {
         client_dns_2: get_required_var(&vars, "CLIENT_DNS_2")?
             .parse::<Ipv4Addr>()
             .map_err(|e| format!("Invalid CLIENT_DNS_2: {}", e))?,
-        allowed_ips: get_required_var(&vars, "ALLOWED_IPS")?,
     })
 }
 
