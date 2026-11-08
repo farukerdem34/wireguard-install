@@ -977,6 +977,14 @@ fn sync_wireguard_config(interface: &str) -> Result<(), String> {
                 .output()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
+            if !strip_output.status.success() {
+                let stderr = String::from_utf8_lossy(&strip_output.stderr);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("wg-quick strip failed: {}", stderr),
+                ));
+            }
+
             if let Some(stdin) = child.stdin.as_mut() {
                 use std::io::Write;
                 stdin.write_all(&strip_output.stdout)?;
